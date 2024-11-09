@@ -2,9 +2,15 @@
 #include "soniclib.h"
 #include "ch_extra_display_utils.h"
 #include "soniclib_params.h"
-#include "ch101_gpr.h"
 
+#ifdef SHORT_RANGE
+#include "ch101_gpr_sr.h"
+#define FW_INIT_FUNC ch101_gpr_sr_init
+#else
+#include "ch101_gpr.h"
 #define FW_INIT_FUNC ch101_gpr_init
+#endif
+
 #define SENSOR_MAX_RANGE_MM       (120)   /* maximum range, in mm */
 #define READ_IQ_DATA
 #define READ_IQ_BLOCKING
