@@ -17,7 +17,7 @@ USEMODULE += ztimer_msec
 USEMODULE += saul_default
 
 USEPKG += soniclib
-SONICLIB_FIRMWARE = CH101_GPR
+SONICLIB_FIRMWARE = NONE
 SONICLIB_DEBUG_LEVEL = INFO
 SENSORS := "{.i2c_bus=ACME1_I2C_DEV,.i2c_addr=41,.prog_pin=GPIO_PIN\(PB,23\),.io_pin=GPIO_PIN\(PA,1\)},"
 SENSORS += "{.i2c_bus=ACME2_I2C_DEV,.i2c_addr=41,.prog_pin=GPIO_PIN\(PA,7\),.io_pin=GPIO_PIN\(PA,0\)}"
@@ -25,5 +25,8 @@ SENSORS += "{.i2c_bus=ACME2_I2C_DEV,.i2c_addr=41,.prog_pin=GPIO_PIN\(PA,7\),.io_
 CFLAGS += -DACME1_BUS_MODE=MODE_I2C
 CFLAGS += -DACME2_BUS_MODE=MODE_I2C
 CFLAGS += -DSONICLIB_PARAMS="$(SENSORS)"
+
+EXTERNAL_MODULE_DIRS += fw
+USEMODULE += ch101_gpr
 
 include $(RIOTBASE)/Makefile.include
