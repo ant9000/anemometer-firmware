@@ -12,13 +12,11 @@ PORT ?= /dev/ttyUSB0
 USEMODULE += od
 USEMODULE += od_string
 USEMODULE += printf_float
-USEMODULE += periph_spi_reconfigure
 USEMODULE += ztimer_msec
-USEMODULE += saul_default
 
 USEPKG += soniclib
 SONICLIB_FIRMWARE = NONE
-SONICLIB_DEBUG_LEVEL = INFO
+SONICLIB_DEBUG_LEVEL = ERROR
 SENSORS := "{.i2c_bus=ACME1_I2C_DEV,.i2c_addr=41,.prog_pin=GPIO_PIN\(PB,23\),.io_pin=GPIO_PIN\(PA,1\)},"
 SENSORS += "{.i2c_bus=ACME2_I2C_DEV,.i2c_addr=41,.prog_pin=GPIO_PIN\(PA,7\),.io_pin=GPIO_PIN\(PA,0\)}"
 
@@ -28,5 +26,6 @@ CFLAGS += -DSONICLIB_PARAMS="$(SENSORS)"
 
 EXTERNAL_MODULE_DIRS += fw
 USEMODULE += ch101
+CFLAGS += -DSHORT_RANGE
 
 include $(RIOTBASE)/Makefile.include

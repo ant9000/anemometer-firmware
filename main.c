@@ -1,4 +1,6 @@
 #include <stdio.h>
+#include "ztimer.h"
+
 #include "soniclib.h"
 #include "ch_extra_display_utils.h"
 #include "soniclib_params.h"
@@ -12,36 +14,31 @@
 #endif
 
 #define SENSOR_MAX_RANGE_MM       (120)   /* maximum range, in mm */
-#define READ_IQ_DATA
-#define READ_IQ_BLOCKING
+#define CH101_MAX_SAMPLES         (225)
+#define MEASUREMENT_INTERVAL_MS   (2000)
 
-/* Task flag word
- *   This variable contains the DATA_READY_FLAG and IQ_READY_FLAG bit flags
- *   that are set in I/O processing routines.  The flags are checked in the
- *   main() loop and, if set, will cause an appropriate handler function to
- *   be called to process sensor data.
- */
+#define DATA_READY_FLAG     (1 << 0)
 volatile uint32_t taskflags = 0;
 
-/* Bit flags used in main loop to check for completion of sensor I/O.  */
-#define DATA_READY_FLAG     (1 << 0)
-#define IQ_READY_FLAG       (1 << 1)
+typedef struct {
+    uint32_t        range;                      // from ch_get_range()
+    uint16_t        amplitude;                  // from ch_get_amplitude()
+    uint16_t        num_samples;                // from ch_get_num_samples()
+    ch_iq_sample_t  iq_data[CH101_MAX_SAMPLES]; // from ch_get_iq_data()
+} soniclib_data_t;
 
-/* Device tracking variables
- *   These are bit-field variables which contain a separate bit assigned to
- *   each (possible) sensor, indexed by the device number.  The active_devices
- *   variable contains the bit pattern describing which ports have active
- *   sensors connected.  The data_ready_devices variable is set bit-by-bit
- *   as sensors interrupt, indicating they have completed a measurement
- *   cycle.  The two variables are compared to determine when all active
- *   devices have interrupted.
- */
+static soniclib_data_t soniclib_data[SONICLIB_NUMOF];
+
 static uint32_t active_devices;
 static uint32_t data_ready_devices;
-/* Number of connected sensors */
 static uint8_t  num_connected_sensors = 0;
-/* Number of sensors that use h/w triggering to start measurement */
-static uint8_t  num_triggered_devices = 0;
+
+static ztimer_t timer;
+static void timer_callback(void *arg) {
+    (void)arg;
+    ch_group_trigger(&soniclib_group);
+    ztimer_set(ZTIMER_MSEC, &timer, MEASUREMENT_INTERVAL_MS);
+}
 
 static void sensor_int_callback(ch_group_t *grp_ptr, uint8_t dev_num, ch_interrupt_type_t int_type) {
     (void)int_type;
@@ -55,8 +52,57 @@ static void sensor_int_callback(ch_group_t *grp_ptr, uint8_t dev_num, ch_interru
     }
 }
 
-static void io_complete_callback(ch_group_t __attribute__((unused)) *grp_ptr) {
-    taskflags |= IQ_READY_FLAG;
+static uint8_t display_iq_data(ch_dev_t *dev_ptr) {
+    uint16_t start_sample = 0;
+    uint8_t  res = 0;
+    uint16_t num_samples = ch_get_num_samples(dev_ptr);
+    uint8_t  dev_num = ch_get_dev_num(dev_ptr);
+    res = ch_get_iq_data(dev_ptr, soniclib_data[dev_num].iq_data, start_sample, num_samples, CH_IO_MODE_BLOCK);
+    if (!res) {
+        printf("     %d I/Q samples copied \n", num_samples);
+        /* Output IQ values in CSV format, one pair (sample) per line */
+        ch_iq_sample_t *iq_ptr;
+        iq_ptr = (ch_iq_sample_t *) &(soniclib_data[dev_num].iq_data);
+        for (int count = 0; count < num_samples; count++) {
+            printf("\n%d,%d", iq_ptr->q, iq_ptr->i);    // output Q before I
+            iq_ptr++;
+        }
+    } else {
+        printf("     Error reading %d I/Q samples", num_samples);
+    }
+    return res;
+}
+
+static uint8_t handle_data_ready(ch_group_t *grp_ptr) {
+    uint8_t     dev_num;
+    uint8_t     ret_val = 0;
+    for (dev_num = 0; dev_num < ch_get_num_ports(grp_ptr); dev_num++) {
+        ch_dev_t *dev_ptr = ch_get_dev_ptr(grp_ptr, dev_num);
+        if (ch_sensor_is_connected(dev_ptr)) {
+            soniclib_data[dev_num].range = ch_get_range(dev_ptr, CH_RANGE_DIRECT);
+            if (soniclib_data[dev_num].range == CH_NO_TARGET) {
+                /* No target object was detected - no range value */
+                soniclib_data[dev_num].amplitude = 0;  /* no updated amplitude */
+                printf("\n Port %d:          no target found        ", dev_num);
+            } else {
+                /* Target object was successfully detected (range available) */
+                soniclib_data[dev_num].amplitude = ch_get_amplitude(dev_ptr);
+                printf("\n Port %d:  Range: %0.1f mm  Amp: %u \n", dev_num,
+                        (float) soniclib_data[dev_num].range/32.0f,
+                        soniclib_data[dev_num].amplitude);
+            }
+            /* Store number of active samples in this measurement */
+            soniclib_data[dev_num].num_samples = ch_get_num_samples(dev_ptr);
+            /* Read raw I/Q values for all samples */
+            display_iq_data(dev_ptr);
+            /* If more than 2 sensors, put each on its own line */
+            if (num_connected_sensors > 2) {
+                printf("\n");
+            }
+        }
+    }
+    printf("\n");
+    return ret_val;
 }
 
 int main(void)
@@ -114,9 +160,6 @@ int main(void)
     /* Register callback function for measure ready interrupt */
     ch_io_int_callback_set(grp_ptr, sensor_int_callback);
 
-    /* Register callback function for I/Q data ready event */
-    ch_io_complete_callback_set(grp_ptr, io_complete_callback);
-
     printf ("Configuring sensor(s)...\n");
     for (dev_num = 0; dev_num < num_ports; dev_num++) {
         ch_config_t dev_config;
@@ -124,7 +167,6 @@ int main(void)
         if (ch_sensor_is_connected(dev_ptr)) {
             num_connected_sensors++;            // count one more connected
             active_devices |= (1 << dev_num);   // add to active device bit mask
-            num_triggered_devices++;            // will be triggered
             dev_config.mode            = CH_MODE_TRIGGERED_TX_RX;
             dev_config.max_range       = SENSOR_MAX_RANGE_MM;
             dev_config.sample_interval = 0;
@@ -137,5 +179,21 @@ int main(void)
         }
     }
 
+    /* Initialize the periodic timer we'll use to trigger the measurements. */
+    printf("Initializing sample timer for %dms interval... ", MEASUREMENT_INTERVAL_MS);
+    timer.callback = timer_callback;
+    ztimer_set(ZTIMER_MSEC, &timer, MEASUREMENT_INTERVAL_MS);
+    printf("OK\n");
+
+    printf("Starting measures\n");
+    while (1) {
+        if (taskflags == 0) {
+            ztimer_sleep(ZTIMER_MSEC, 1);
+        }
+        if (taskflags & DATA_READY_FLAG) {
+            taskflags &= ~DATA_READY_FLAG;   // pulisci il flag
+            handle_data_ready(grp_ptr);      // leggi e visualizza la misurazione
+        }
+    }
     return 0;
 }
