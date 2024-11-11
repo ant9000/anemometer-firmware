@@ -22,14 +22,7 @@
 
 volatile uint32_t taskflags = 0;
 
-typedef struct {
-    uint32_t        range;                      // from ch_get_range()
-    uint16_t        amplitude;                  // from ch_get_amplitude()
-    uint16_t        num_samples;                // from ch_get_num_samples()
-    ch_iq_sample_t  iq_data[CH101_MAX_SAMPLES]; // from ch_get_iq_data()
-} soniclib_data_t;
-
-static soniclib_data_t soniclib_data[SONICLIB_NUMOF];
+static ch_iq_sample_t iq_data[CH101_MAX_SAMPLES];
 
 static uint32_t active_devices;
 static uint32_t data_ready_devices;
@@ -56,57 +49,39 @@ static void sensor_int_callback(ch_group_t *grp_ptr, uint8_t dev_num, ch_interru
     }
 }
 
-static uint8_t display_iq_data(ch_dev_t *dev_ptr) {
-    uint16_t start_sample = 0;
-    uint8_t  res = 0;
-    uint16_t num_samples = ch_get_num_samples(dev_ptr);
-    uint8_t  dev_num = ch_get_dev_num(dev_ptr);
-    res = ch_get_iq_data(dev_ptr, soniclib_data[dev_num].iq_data, start_sample, num_samples, CH_IO_MODE_BLOCK);
-    if (!res) {
-        printf("     %d I/Q samples copied \n", num_samples);
-        // Output IQ values in CSV format, one pair (sample) per line
-        ch_iq_sample_t *iq_ptr;
-        iq_ptr = (ch_iq_sample_t *) &(soniclib_data[dev_num].iq_data);
-        for (int count = 0; count < num_samples; count++) {
-            printf("\n%d,%d", iq_ptr->q, iq_ptr->i);    // output Q before I
-            iq_ptr++;
-        }
-    } else {
-        printf("     Error reading %d I/Q samples", num_samples);
-    }
-    return res;
-}
-
-static uint8_t handle_data_ready(ch_group_t *grp_ptr) {
-    uint8_t     dev_num;
-    uint8_t     ret_val = 0;
-    for (dev_num = 0; dev_num < ch_get_num_ports(grp_ptr); dev_num++) {
+static void handle_data_ready(ch_group_t *grp_ptr) {
+    uint8_t num_ports = ch_get_num_ports(grp_ptr);
+    printf("[");
+    for (uint8_t dev_num = 0; dev_num < num_ports; dev_num++) {
         ch_dev_t *dev_ptr = ch_get_dev_ptr(grp_ptr, dev_num);
+        printf("{\"sensor\": %d", dev_num);
         if (ch_sensor_is_connected(dev_ptr)) {
-            soniclib_data[dev_num].range = ch_get_range(dev_ptr, CH_RANGE_ECHO_ROUND_TRIP);
-            if (soniclib_data[dev_num].range == CH_NO_TARGET) {
-                // No target object was detected - no range value
-                soniclib_data[dev_num].amplitude = 0;  // no updated amplitude
-                printf("\n Port %d:          no target found        ", dev_num);
+            uint32_t range = ch_get_range(dev_ptr, CH_RANGE_ECHO_ROUND_TRIP);
+            if (range == CH_NO_TARGET) {
+                printf(", \"range_mm\": -1, \"amp\": -1");
             } else {
-                // Target object was successfully detected (range available)
-                soniclib_data[dev_num].amplitude = ch_get_amplitude(dev_ptr);
-                printf("\n Port %d:  Range: %0.1f mm  Amp: %u \n", dev_num,
-                        (float) soniclib_data[dev_num].range/32.0f,
-                        soniclib_data[dev_num].amplitude);
+                uint16_t amplitude = ch_get_amplitude(dev_ptr);
+                printf(", \"range_mm\": %0.1f, \"amp\": %u", (float) range/32.0f, amplitude);
             }
-            // Store number of active samples in this measurement
-            soniclib_data[dev_num].num_samples = ch_get_num_samples(dev_ptr);
-            // Read raw I/Q values for all samples
-            display_iq_data(dev_ptr);
-            // If more than 2 sensors, put each on its own line
-            if (num_connected_sensors > 2) {
-                printf("\n");
+            uint16_t num_samples = ch_get_num_samples(dev_ptr);
+            printf(", \"num_samples\": %d", num_samples);
+            uint8_t res = ch_get_iq_data(dev_ptr, iq_data, 0, num_samples, CH_IO_MODE_BLOCK);
+            if (res == 0) {
+                printf(", \"qi_data\": [");
+                ch_iq_sample_t *iq_ptr;
+                iq_ptr = iq_data;
+                for (int count = 0; count < num_samples; count++) {
+                    printf("[%d,%d]", iq_ptr->q, iq_ptr->i);
+                    if (count < num_samples-1) { printf(","); }
+                    iq_ptr++;
+                }
+                printf("]");
             }
         }
+        printf("}");
+        if (dev_num < num_ports-1) { printf(","); }
     }
-    printf("\n");
-    return ret_val;
+    printf("]\n");
 }
 
 int main(void)
@@ -184,7 +159,7 @@ int main(void)
         }
     }
 
-    printf("Starting measures\n");
+    printf("Starting measures\n\n");
     while (1) {
         if (taskflags == 0) {
             ztimer_sleep(ZTIMER_MSEC, 1);
