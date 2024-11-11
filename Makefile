@@ -8,6 +8,8 @@ EXTERNAL_PKG_DIRS=$(LORA3ABASE)/pkg
 DEVELHELP ?= 1
 QUIET ?= 1
 PORT ?= /dev/ttyUSB0
+SR ?= 1
+RANGE ?=
 
 USEMODULE += od
 USEMODULE += od_string
@@ -26,6 +28,13 @@ CFLAGS += -DSONICLIB_PARAMS="$(SENSORS)"
 
 EXTERNAL_MODULE_DIRS += fw
 USEMODULE += ch101
-CFLAGS += -DSHORT_RANGE
+
+ifeq (1, $(SR))
+  CFLAGS += -DSHORT_RANGE
+endif
+
+ifneq (, $(RANGE))
+  CFLAGS += -DSENSOR_MAX_RANGE_MM=$(RANGE)
+endif
 
 include $(RIOTBASE)/Makefile.include

@@ -13,7 +13,9 @@
 #define FW_INIT_FUNC ch101_gpr_init
 #endif
 
+#ifndef SENSOR_MAX_RANGE_MM
 #define SENSOR_MAX_RANGE_MM (120)   // maximum range, in mm
+#endif
 #define CH101_MAX_SAMPLES   (225)
 #define TRIGGER             GPIO_PIN(PA, 25)
 
