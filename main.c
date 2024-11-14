@@ -56,24 +56,30 @@ static void handle_data_ready(ch_group_t *grp_ptr) {
     printf("[");
     for (uint8_t dev_num = 0; dev_num < num_ports; dev_num++) {
         ch_dev_t *dev_ptr = ch_get_dev_ptr(grp_ptr, dev_num);
-        printf("{\"sensor\": %d", dev_num);
+        printf("{\"sensor\":%d", dev_num);
         if (ch_sensor_is_connected(dev_ptr)) {
             uint32_t range = ch_get_range(dev_ptr, CH_RANGE_ECHO_ROUND_TRIP);
             if (range == CH_NO_TARGET) {
-                printf(", \"range_mm\": -1, \"amp\": -1");
+                printf(",\"range_mm\":-1,\"amp\":-1");
             } else {
                 uint16_t amplitude = ch_get_amplitude(dev_ptr);
-                printf(", \"range_mm\": %0.1f, \"amp\": %u", (float) range/32.0f, amplitude);
+                printf(",\"range_mm\":%0.1f,\"amp\":%u", (float) range/32.0f, amplitude);
             }
             uint16_t num_samples = ch_get_num_samples(dev_ptr);
-            printf(", \"num_samples\": %d", num_samples);
+            printf(",\"num_samples\":%d", num_samples);
             uint8_t res = ch_get_iq_data(dev_ptr, iq_data, 0, num_samples, CH_IO_MODE_BLOCK);
             if (res == 0) {
-                printf(", \"qi_data\": [");
-                ch_iq_sample_t *iq_ptr;
+                printf(",\"i\":[");
+                ch_iq_sample_t *iq_ptr = iq_data;
+                for (int count = 0; count < num_samples; count++) {
+                    printf("%d", iq_ptr->i);
+                    if (count < num_samples-1) { printf(","); }
+                    iq_ptr++;
+                }
+                printf("],\"q\":[");
                 iq_ptr = iq_data;
                 for (int count = 0; count < num_samples; count++) {
-                    printf("[%d,%d]", iq_ptr->q, iq_ptr->i);
+                    printf("%d", iq_ptr->q);
                     if (count < num_samples-1) { printf(","); }
                     iq_ptr++;
                 }
