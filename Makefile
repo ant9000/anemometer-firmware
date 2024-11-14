@@ -8,8 +8,9 @@ EXTERNAL_PKG_DIRS=$(LORA3ABASE)/pkg
 DEVELHELP ?= 1
 QUIET ?= 1
 PORT ?= /dev/ttyUSB0
+BAUD ?= 921600
 SR ?= 1
-RANGE ?=
+RANGE ?= 151
 
 USEMODULE += od
 USEMODULE += od_string
@@ -36,5 +37,7 @@ endif
 ifneq (, $(RANGE))
   CFLAGS += -DSENSOR_MAX_RANGE_MM=$(RANGE)
 endif
+
+CFLAGS += -DSTDIO_UART_BAUDRATE=$(BAUD)
 
 include $(RIOTBASE)/Makefile.include

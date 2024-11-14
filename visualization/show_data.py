@@ -22,7 +22,7 @@ app.layout = html.Div(children=[
     dcc.Graph(id='graph-content'),
     dcc.Interval(
         id='interval-component',
-        interval=250, # in milliseconds
+        interval=100, # in milliseconds
         n_intervals=0
     )
 ])
@@ -49,9 +49,9 @@ def update_graph(n):
             logger.error(e)
     return fig
 
-def read_serial(port):
+def read_serial(port, baud):
     global measure
-    s = serial.Serial(port=port, baudrate=115200)
+    s = serial.Serial(port=port, baudrate=baud)
     while True:
         line = s.readline().decode("utf-8").rstrip()
         try:
@@ -61,11 +61,21 @@ def read_serial(port):
             logger.info(line)
 
 if __name__ == '__main__':
-    if len(sys.argv) != 2:
+    port = "/dev/ttyUSB0"
+    baud = 921600
+    if "-h" in sys.argv:
         me = os.path.basename(sys.argv[0])
-        print(f"Usage: {me} serial_port\n")
-        sys.exit(1)
-    port = sys.argv[1]
-    feed = threading.Thread(target=read_serial, args=[port], daemon=True)
+        print(f"Usage: {me} [serial port] [baud rate]\n")
+        print(f"Default values are {port}, {baud}\n")
+        sys.exit(0)
+    try:
+        port = sys.argv[1]
+    except:
+        pass
+    try:
+        baud = int(sys.argv[2])
+    except:
+        pass
+    feed = threading.Thread(target=read_serial, args=[port, baud], daemon=True)
     feed.start()
     app.run()
