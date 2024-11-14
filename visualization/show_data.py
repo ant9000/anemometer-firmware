@@ -42,8 +42,10 @@ def update_graph(n):
                 x = np.arange(item["num_samples"])
                 rho, phi = polar(item["i"], item["q"])
                 peak = rho.argmax()
-                fig.add_trace(go.Scatter(y=rho, mode="lines"), row=i+1, col=1)
-                fig.add_trace(go.Scatter(y=phi, mode="lines"), row=i+1, col=2)
+                fig.add_trace(go.Scatter(y=rho, line_color="RoyalBlue", showlegend=False), row=i+1, col=1)
+                fig.add_trace(go.Scatter(y=rho, mode="markers", marker_color="RoyalBlue", showlegend=False), row=i+1, col=1)
+                fig.add_trace(go.Scatter(y=phi, line_color="LightSeaGreen", showlegend=False), row=i+1, col=2)
+                fig.add_trace(go.Scatter(y=phi, mode="markers", marker_color="LightSeaGreen", showlegend=False), row=i+1, col=2)
                 fig.add_vline(peak, line_color="red", row=i+1)
         except Exception as e:
             logger.error(e)
@@ -76,6 +78,7 @@ if __name__ == '__main__':
         baud = int(sys.argv[2])
     except:
         pass
+
     feed = threading.Thread(target=read_serial, args=[port, baud], daemon=True)
     feed.start()
     app.run()
