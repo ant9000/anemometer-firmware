@@ -38,6 +38,7 @@ ifneq (, $(RANGE))
   CFLAGS += -DSENSOR_MAX_RANGE_MM=$(RANGE)
 endif
 
+CFLAGS += -DCLOCK_CORECLOCK=\(48000000U\)
 CFLAGS += -DSTDIO_UART_BAUDRATE=$(BAUD)
 
 include $(RIOTBASE)/Makefile.include

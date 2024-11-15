@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <string.h>
 #include "ztimer.h"
 
 #include "soniclib.h"
@@ -24,14 +25,21 @@
 
 volatile uint32_t taskflags = 0;
 
-static ch_iq_sample_t iq_data[CH101_MAX_SAMPLES];
 
 static uint32_t active_devices;
 static uint32_t data_ready_devices;
 static uint8_t  num_connected_sensors = 0;
 
-static void trigger_callback(void *arg)
-{
+typedef struct {
+    uint32_t       range;
+    uint16_t       amplitude;
+    uint16_t       num_samples;
+    ch_iq_sample_t iq_data[CH101_MAX_SAMPLES];
+} soniclib_data_t;
+
+static soniclib_data_t soniclib_data[SONICLIB_NUMOF];
+
+static void trigger_callback(void *arg) {
     (void)arg;
     if (taskflags == 0) {
         taskflags |= MEASURE_PENDING;
@@ -53,47 +61,54 @@ static void sensor_int_callback(ch_group_t *grp_ptr, uint8_t dev_num, ch_interru
 
 static void handle_data_ready(ch_group_t *grp_ptr) {
     uint8_t num_ports = ch_get_num_ports(grp_ptr);
+    memset(soniclib_data, 0, sizeof(soniclib_data));
+    for (uint8_t dev_num = 0; dev_num < num_ports; dev_num++) {
+        ch_dev_t *dev_ptr = ch_get_dev_ptr(grp_ptr, dev_num);
+        if (ch_sensor_is_connected(dev_ptr)) {
+            soniclib_data[dev_num].range = ch_get_range(dev_ptr, CH_RANGE_ECHO_ROUND_TRIP);
+            soniclib_data[dev_num].amplitude = ch_get_amplitude(dev_ptr);
+            soniclib_data[dev_num].num_samples = ch_get_num_samples(dev_ptr);
+            int8_t res = ch_get_iq_data(dev_ptr, soniclib_data[dev_num].iq_data, 0, soniclib_data[dev_num].num_samples, CH_IO_MODE_BLOCK);
+            if (res != 0) { soniclib_data[dev_num].num_samples = 0; }
+        }
+    }
+}
+
+static void print_data(ch_group_t *grp_ptr) {
+    uint8_t num_ports = ch_get_num_ports(grp_ptr);
     printf("[");
     for (uint8_t dev_num = 0; dev_num < num_ports; dev_num++) {
         ch_dev_t *dev_ptr = ch_get_dev_ptr(grp_ptr, dev_num);
-        printf("{\"sensor\":%d", dev_num);
         if (ch_sensor_is_connected(dev_ptr)) {
-            uint32_t range = ch_get_range(dev_ptr, CH_RANGE_ECHO_ROUND_TRIP);
-            if (range == CH_NO_TARGET) {
+            printf("{\"sensor\":%d", dev_num);
+            if (soniclib_data[dev_num].range == CH_NO_TARGET) {
                 printf(",\"range_mm\":-1,\"amp\":-1");
             } else {
-                uint16_t amplitude = ch_get_amplitude(dev_ptr);
-                printf(",\"range_mm\":%0.1f,\"amp\":%u", (float) range/32.0f, amplitude);
+                printf(",\"range_mm\":%0.1f,\"amp\":%u", (float) soniclib_data[dev_num].range/32.0f, soniclib_data[dev_num].amplitude);
             }
-            uint16_t num_samples = ch_get_num_samples(dev_ptr);
-            printf(",\"num_samples\":%d", num_samples);
-            uint8_t res = ch_get_iq_data(dev_ptr, iq_data, 0, num_samples, CH_IO_MODE_BLOCK);
-            if (res == 0) {
-                printf(",\"i\":[");
-                ch_iq_sample_t *iq_ptr = iq_data;
-                for (int count = 0; count < num_samples; count++) {
-                    printf("%d", iq_ptr->i);
-                    if (count < num_samples-1) { printf(","); }
-                    iq_ptr++;
-                }
-                printf("],\"q\":[");
-                iq_ptr = iq_data;
-                for (int count = 0; count < num_samples; count++) {
-                    printf("%d", iq_ptr->q);
-                    if (count < num_samples-1) { printf(","); }
-                    iq_ptr++;
-                }
-                printf("]");
+            printf(",\"num_samples\":%d", soniclib_data[dev_num].num_samples);
+            printf(",\"i\":[");
+            ch_iq_sample_t *iq_ptr = soniclib_data[dev_num].iq_data;
+            for (int count = 0; count < soniclib_data[dev_num].num_samples; count++) {
+                printf("%d", iq_ptr->i);
+                if (count < soniclib_data[dev_num].num_samples-1) { printf(","); }
+                iq_ptr++;
             }
+            printf("],\"q\":[");
+            iq_ptr = soniclib_data[dev_num].iq_data;
+            for (int count = 0; count < soniclib_data[dev_num].num_samples; count++) {
+                printf("%d", iq_ptr->q);
+                if (count < soniclib_data[dev_num].num_samples-1) { printf(","); }
+                iq_ptr++;
+            }
+            printf("]}");
+            if (dev_num < num_ports-1) { printf(","); }
         }
-        printf("}");
-        if (dev_num < num_ports-1) { printf(","); }
     }
     printf("]\n");
 }
 
-int main(void)
-{
+int main(void) {
     ch_group_t *grp_ptr = &soniclib_group;
     uint8_t res;
     uint8_t num_ports;
@@ -109,7 +124,6 @@ int main(void)
     for (uint8_t i = 0; i < SONICLIB_NUMOF; i++) {
         gpio_init(soniclib_params[i].prog_pin, GPIO_OUT);
     }
-    gpio_init_int(TRIGGER, GPIO_IN, GPIO_FALLING, trigger_callback, NULL);
 
     printf("Initializing sensor(s)...\n");
     res = 0;
@@ -168,13 +182,16 @@ int main(void)
     }
 
     printf("Starting measures\n\n");
+    gpio_init_int(TRIGGER, GPIO_IN, GPIO_FALLING, trigger_callback, NULL);
+
     while (1) {
         if (taskflags == 0) {
             ztimer_sleep(ZTIMER_MSEC, 1);
         }
         if (taskflags & DATA_READY_FLAG) {
-            handle_data_ready(grp_ptr);
+            handle_data_ready(grp_ptr); // fetch available data
             taskflags = 0; // now we can start another measure
+            print_data(grp_ptr); // print data on console
         }
     }
     return 0;
