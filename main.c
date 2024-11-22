@@ -123,6 +123,7 @@ int main(void) {
 
     for (uint8_t i = 0; i < SONICLIB_NUMOF; i++) {
         gpio_init(soniclib_params[i].prog_pin, GPIO_OUT);
+        gpio_init(soniclib_params[i].reset_pin, GPIO_OUT);
     }
 
     printf("Initializing sensor(s)...\n");
