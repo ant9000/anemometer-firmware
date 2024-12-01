@@ -18,7 +18,7 @@
 #define SENSOR_MAX_RANGE_MM (120)   // maximum range, in mm
 #endif
 #define CH101_MAX_SAMPLES   (225)
-#define TRIGGER             GPIO_PIN(PA, 25)
+#define TRIGGER             GPIO_PIN(PA, 6)
 
 #define MEASURE_PENDING     (1 << 0)
 #define DATA_READY_FLAG     (1 << 1)
