@@ -11,6 +11,7 @@
 
 static hdc3020_t hdc3020_devs[HDC3020_NUMOF];
 typedef struct {
+    uint8_t connected;
     double temperature;
     double humidity;
 } hdc3020_data_t;
@@ -54,7 +55,9 @@ static void trigger_callback(void *arg) {
     if (taskflags == 0) {
         taskflags |= MEASURE_PENDING;
         for (uint8_t i = 0; i < HDC3020_NUMOF; i++) {
-            hdc3020_trigger_on_demand_measurement(&hdc3020_devs[i], 0);
+            if (hdc3020_data[i].connected) {
+                hdc3020_trigger_on_demand_measurement(&hdc3020_devs[i], 0);
+            }
         }
         ch_group_trigger(&soniclib_group);
     }
@@ -86,9 +89,11 @@ static void handle_data_ready(ch_group_t *grp_ptr) {
         }
     }
     for (uint8_t i = 0; i < HDC3020_NUMOF; i++) {
-        if (hdc3020_fetch_on_demand_measurement(&hdc3020_devs[i], &hdc3020_data[i].temperature, &hdc3020_data[i].humidity) != HDC3020_OK) {
-            hdc3020_data[i].temperature = -999;
-            hdc3020_data[i].humidity = -999;
+        if (hdc3020_data[i].connected) {
+            if (hdc3020_fetch_on_demand_measurement(&hdc3020_devs[i], &hdc3020_data[i].temperature, &hdc3020_data[i].humidity) != HDC3020_OK) {
+                hdc3020_data[i].temperature = -999;
+                hdc3020_data[i].humidity = -999;
+            }
         }
     }
 }
@@ -97,7 +102,9 @@ static void print_data(ch_group_t *grp_ptr) {
     uint8_t num_ports = ch_get_num_ports(grp_ptr);
     printf("[");
     for (uint8_t i = 0; i < HDC3020_NUMOF; i++) {
-        printf("{\"hdc3020\":%d,\"temp\":%.1f,\"rh\":%.1f},", i, hdc3020_data[i].temperature, hdc3020_data[i].humidity);
+        if (hdc3020_data[i].connected) {
+            printf("{\"hdc3020\":%d,\"temp\":%.1f,\"rh\":%.1f},", i, hdc3020_data[i].temperature, hdc3020_data[i].humidity);
+        }
     }
     for (uint8_t dev_num = 0; dev_num < num_ports; dev_num++) {
         ch_dev_t *dev_ptr = ch_get_dev_ptr(grp_ptr, dev_num);
@@ -207,9 +214,11 @@ int main(void) {
     printf("Initializing %d x HDC3020\n", HDC3020_NUMOF);
     for (unsigned int i = 0; i < HDC3020_NUMOF; i++) {
         if (hdc3020_init(&hdc3020_devs[i], &hdc3020_params[i]) != HDC3020_OK) {
+            hdc3020_data[i].connected = 0;
             printf("Error initializing hdc3020 #%u\n", i);
             continue;
         }
+        hdc3020_data[i].connected = 1;
     }
 
     printf("Starting measures\n\n");
