@@ -16,6 +16,9 @@ USEMODULE += od
 USEMODULE += od_string
 USEMODULE += printf_float
 USEMODULE += ztimer_msec
+USEMODULE += shell
+USEMODULE += shell_cmds_default
+USEMODULE += shell_extra_commands
 
 USEPKG += soniclib
 SONICLIB_FIRMWARE = NONE
@@ -31,6 +34,8 @@ USEMODULE += hdc3020
 HDC3020_SENSORS := "{.i2c_dev=ACME0_I2C_DEV,.i2c_addr=HDC3020_PARAM_I2C_ADDR,.enable_pin=HDC3020_ENABLE_PIN,.enable_on=HDC3020_ENABLE_ON,.start_delay=HDC3020_START_DELAY,.measure_delay=HDC3020_MEAS_DELAY},"
 HDC3020_SENSORS += "{.i2c_dev=ACME2_I2C_DEV,.i2c_addr=HDC3020_PARAM_I2C_ADDR,.enable_pin=HDC3020_ENABLE_PIN,.enable_on=HDC3020_ENABLE_ON,.start_delay=HDC3020_START_DELAY,.measure_delay=HDC3020_MEAS_DELAY}"
 CFLAGS += -DHDC3020_PARAMS="$(HDC3020_SENSORS)"
+CFLAGS += -DHDC3020_SAULINFO="{.name=\"hdc3020-0\"},{.name=\"hdc3020-1\"}"
+
 
 EXTERNAL_MODULE_DIRS += fw
 USEMODULE += ch101

@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <string.h>
 #include "ztimer.h"
+#include "shell.h"
 
 #include "soniclib.h"
 #include "ch_extra_display_utils.h"
@@ -9,6 +10,7 @@
 #include "hdc3020.h"
 #include "hdc3020_params.h"
 
+extern void auto_init_hdc3020(void);
 static hdc3020_t hdc3020_devs[HDC3020_NUMOF];
 typedef struct {
     uint8_t connected;
@@ -137,6 +139,38 @@ static void print_data(ch_group_t *grp_ptr) {
     printf("]\n");
 }
 
+int measure_cmd(int argc, char **argv) {
+    (void)argc;
+    (void)argv;
+    ch_group_t *grp_ptr = &soniclib_group;
+    taskflags |= MEASURE_PENDING;
+    for (uint8_t i = 0; i < HDC3020_NUMOF; i++) {
+        if (hdc3020_data[i].connected) {
+            hdc3020_trigger_on_demand_measurement(&hdc3020_devs[i], 0);
+        }
+    }
+    ch_group_trigger(&soniclib_group);
+    while (1) {
+        if (taskflags == 0) {                                                                \
+            ztimer_sleep(ZTIMER_MSEC, 1);
+        }
+        if (taskflags & DATA_READY_FLAG) {
+            handle_data_ready(grp_ptr); // fetch available data
+            taskflags = 0; // now we can start another measure
+            print_data(grp_ptr); // print data on console
+            break;
+        }
+    }
+    return 0;
+}
+
+static char line_buf[SHELL_DEFAULT_BUFSIZE];
+static const shell_command_t shell_commands[] =
+{
+    { "measure",  "trigger measure",  measure_cmd },
+    { NULL,       NULL,               NULL        }
+};
+
 int main(void) {
     ch_group_t *grp_ptr = &soniclib_group;
     uint8_t res;
@@ -221,17 +255,23 @@ int main(void) {
         hdc3020_data[i].connected = 1;
     }
 
-    printf("Starting measures\n\n");
-    gpio_init_int(TRIGGER, GPIO_IN, GPIO_FALLING, trigger_callback, NULL);
-
-    while (1) {
-        if (taskflags == 0) {                                                                \
-            ztimer_sleep(ZTIMER_MSEC, 1);
-        }
-        if (taskflags & DATA_READY_FLAG) {
-            handle_data_ready(grp_ptr); // fetch available data
-            taskflags = 0; // now we can start another measure
-            print_data(grp_ptr); // print data on console
+    gpio_init(TRIGGER, GPIO_IN);
+    if (gpio_read(TRIGGER) == 0) {
+        auto_init_hdc3020();
+        printf("Starting shell\n\n");
+        shell_run(shell_commands, line_buf, SHELL_DEFAULT_BUFSIZE);
+    } else {
+        gpio_init_int(TRIGGER, GPIO_IN, GPIO_FALLING, trigger_callback, NULL);
+        printf("Starting measures\n\n");
+        while (1) {
+            if (taskflags == 0) {                                                                \
+                ztimer_sleep(ZTIMER_MSEC, 1);
+            }
+            if (taskflags & DATA_READY_FLAG) {
+                handle_data_ready(grp_ptr); // fetch available data
+                taskflags = 0; // now we can start another measure
+                print_data(grp_ptr); // print data on console
+            }
         }
     }
     return 0;
