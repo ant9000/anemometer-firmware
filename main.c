@@ -6,6 +6,7 @@
 #include "soniclib.h"
 #include "ch_extra_display_utils.h"
 #include "soniclib_params.h"
+#include "persistence.h"
 
 #include "hdc3020.h"
 #include "hdc3020_params.h"
@@ -33,6 +34,8 @@ static hdc3020_data_t hdc3020_data[HDC3020_NUMOF];
 #define CH101_MAX_SAMPLES   (225)
 #define TRIGGER             GPIO_PIN(PA, 6)
 
+#define DEFAULT_CFG  {.mode=CH_MODE_TRIGGERED_TX_RX, .max_range=SENSOR_MAX_RANGE_MM, .sample_interval=0}
+
 #define MEASURE_PENDING     (1 << 0)
 #define DATA_READY_FLAG     (1 << 1)
 
@@ -51,6 +54,33 @@ typedef struct {
 } soniclib_data_t;
 
 static soniclib_data_t soniclib_data[SONICLIB_NUMOF];
+
+typedef struct {
+    ch_config_t soniclib[SONICLIB_NUMOF];
+} config_t;
+static config_t configuration;
+
+static void apply_configuration(void)
+{
+    ch_group_t *grp_ptr = &soniclib_group;
+    uint8_t num_ports = ch_get_num_ports(grp_ptr);
+
+    num_connected_sensors = 0;
+    active_devices = 0;
+    for (uint8_t dev_num = 0; dev_num < num_ports; dev_num++) {
+        ch_dev_t *dev_ptr = ch_get_dev_ptr(grp_ptr, dev_num);
+        if (ch_sensor_is_connected(dev_ptr)) {
+            num_connected_sensors++;            // count one more connected
+            active_devices |= (1 << dev_num);   // add to active device bit mask
+            uint8_t res = ch_set_config(dev_ptr, &(configuration.soniclib[dev_num]));
+            if (!res) {
+                ch_extra_display_config_info(dev_ptr);
+            } else {
+                printf("Device %d: Error during ch_set_config()\n", dev_num);
+            }
+        }
+    }
+}
 
 static void trigger_callback(void *arg) {
     (void)arg;
@@ -164,11 +194,96 @@ int measure_cmd(int argc, char **argv) {
     return 0;
 }
 
+int config_cmd(int argc, char **argv) {
+    if (argc == 1) {
+        goto config_help;
+    } else if (strcmp(argv[1], "show") == 0) {
+        // config show
+        for (size_t i=0; i<SONICLIB_NUMOF; i++) {
+            ch_config_t *cfg = &configuration.soniclib[i];
+            printf(
+                "CH101[%d]: mode=%s, range=%d mm\n",
+                i,
+                (cfg->mode == CH_MODE_TRIGGERED_TX_RX ? "TXRX" : "RX"),
+                cfg->max_range
+            );
+        }
+    } else if (strcmp(argv[1], "set") == 0) {
+        // config set <sensor> <mode> <range>
+        if (argc != 5)
+            goto config_help;
+        int dev_num = atoi(argv[2]);
+        if ((dev_num < 0) || (dev_num >= (int)SONICLIB_NUMOF))
+            goto config_help;
+        ch_mode_t mode;
+        if ((strcmp(argv[3], "txrx") == 0) || (strcmp(argv[3], "TXRX") == 0)) {
+            mode = CH_MODE_TRIGGERED_TX_RX;
+        } else if ((strcmp(argv[3], "rx") == 0) || (strcmp(argv[3], "RX") == 0)) {
+            mode = CH_MODE_TRIGGERED_RX_ONLY;
+        } else
+            goto config_help;
+        int max_range = atoi(argv[4]);
+        if ((max_range <= 0) || (max_range >= 200))
+            goto config_help;
+        configuration.soniclib[dev_num].mode = mode;
+        configuration.soniclib[dev_num].max_range = max_range;
+        printf("Config set.\n");
+    } else if (strcmp(argv[1], "default") == 0) {
+        // config default
+        for (size_t i=0; i<SONICLIB_NUMOF; i++) {
+            ch_config_t cfg = DEFAULT_CFG;
+            memcpy(&configuration.soniclib[i], &cfg, sizeof(cfg));
+        }
+        printf("Config reset to default.\n");
+    } else if (strcmp(argv[1], "load") == 0) {
+        // config load
+        int res = load_from_nvm(&configuration, sizeof(configuration));
+        if (res == 0) {
+            printf("Config loaded from NVM.\n");
+        } else {
+            printf("[ERROR] Config loading failed: %d.\n", res);
+        }
+    } else if (strcmp(argv[1], "apply") == 0) {
+        // config apply
+        apply_configuration();
+    } else if (strcmp(argv[1], "save") == 0) {
+        // config save
+        int res = save_to_nvm(&configuration, sizeof(configuration));
+        if (res >= 0) {
+            printf("Config saved to NVM.\n");
+        } else {
+            printf("[ERROR] Config saving failed: %d.\n", res);
+        }
+    } else if (strcmp(argv[1], "erase") == 0) {
+        // config erase
+        int res = erase_nvm();
+        if (res == 0) {
+            printf("Config erased from NVM.\n");
+        } else {
+            printf("[ERROR] Config erasing failed: %d.\n", res);
+        }
+    } else {
+        goto config_help;
+    }
+    goto config_end;
+config_help:
+    printf("config show                        -- show current sensors config\n");
+    printf("config set <SENSOR> <MODE> <RANGE> -- set mode and range for sensor; SENSOR in [0,%d]; MODE in [TXRX, RX]; RANGE in (0,200)\n", SONICLIB_NUMOF-1);
+    printf("config default                     -- reset config to default values\n");
+    printf("config load                        -- load config from NVM\n");
+    printf("config apply                       -- apply config to sensors\n");
+    printf("config save                        -- save config to NVM\n");
+    printf("config erase                       -- erase NVM\n");
+config_end:
+    return 0;
+}
+
 static char line_buf[SHELL_DEFAULT_BUFSIZE];
 static const shell_command_t shell_commands[] =
 {
-    { "measure",  "trigger measure",  measure_cmd },
-    { NULL,       NULL,               NULL        }
+    { "measure", "trigger measure",   measure_cmd },
+    { "config",  "configure sensors", config_cmd  },
+    { NULL,      NULL,                NULL        },
 };
 
 int main(void) {
@@ -226,24 +341,19 @@ int main(void) {
     // Register callback function for measure ready interrupt
     ch_io_int_callback_set(grp_ptr, sensor_int_callback);
 
-    printf("Configuring sensor(s)...\n");
-    for (dev_num = 0; dev_num < num_ports; dev_num++) {
-        ch_config_t dev_config;
-        ch_dev_t *dev_ptr = ch_get_dev_ptr(grp_ptr, dev_num);
-        if (ch_sensor_is_connected(dev_ptr)) {
-            num_connected_sensors++;            // count one more connected
-            active_devices |= (1 << dev_num);   // add to active device bit mask
-            dev_config.mode            = CH_MODE_TRIGGERED_TX_RX;
-            dev_config.max_range       = SENSOR_MAX_RANGE_MM;
-            dev_config.sample_interval = 0;
-            res = ch_set_config(dev_ptr, &dev_config);
-            if (!res) {
-                ch_extra_display_config_info(dev_ptr);
-            } else {
-                printf("Device %d: Error during ch_set_config()\n", dev_num);
-            }
+    printf("Loading configuration...");
+    if (load_from_nvm(&configuration, sizeof(configuration)) == 0) {
+        printf(" found in flash.\n");
+    } else {
+        printf(" using defaults.\n");
+        for (dev_num = 0; dev_num < num_ports; dev_num++) {
+            ch_config_t dev_config = DEFAULT_CFG;
+            memcpy(&configuration.soniclib[dev_num], &dev_config, sizeof(dev_config));
         }
     }
+
+    printf("Configuring sensor(s)...\n");
+    apply_configuration();
 
     printf("Initializing %d x HDC3020\n", HDC3020_NUMOF);
     for (unsigned int i = 0; i < HDC3020_NUMOF; i++) {
