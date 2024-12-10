@@ -10,7 +10,7 @@ QUIET ?= 1
 PORT ?= /dev/ttyUSB0
 BAUD ?= 576000
 SR ?= 1
-RANGE ?= 151
+RANGE ?= 201
 
 USEMODULE += od
 USEMODULE += od_string
