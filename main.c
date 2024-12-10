@@ -223,7 +223,7 @@ int config_cmd(int argc, char **argv) {
         } else
             goto config_help;
         int max_range = atoi(argv[4]);
-        if ((max_range <= 0) || (max_range >= 200))
+        if ((max_range <= 0) || (max_range >= 250))
             goto config_help;
         configuration.soniclib[dev_num].mode = mode;
         configuration.soniclib[dev_num].max_range = max_range;
@@ -268,7 +268,7 @@ int config_cmd(int argc, char **argv) {
     goto config_end;
 config_help:
     printf("config show                        -- show current sensors config\n");
-    printf("config set <SENSOR> <MODE> <RANGE> -- set mode and range for sensor; SENSOR in [0,%d]; MODE in [TXRX, RX]; RANGE in (0,200)\n", SONICLIB_NUMOF-1);
+    printf("config set <SENSOR> <MODE> <RANGE> -- set mode and range for sensor; SENSOR in [0,%d]; MODE in [TXRX, RX]; RANGE in (0,250)\n", SONICLIB_NUMOF-1);
     printf("config default                     -- reset config to default values\n");
     printf("config load                        -- load config from NVM\n");
     printf("config apply                       -- apply config to sensors\n");
