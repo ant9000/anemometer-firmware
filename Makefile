@@ -11,6 +11,7 @@ PORT ?= /dev/ttyUSB0
 BAUD ?= 576000
 SR ?= 1
 RANGE ?= 201
+ROUNDROBIN ?=
 
 USEMODULE += od
 USEMODULE += od_string
@@ -48,6 +49,10 @@ endif
 
 ifneq (, $(RANGE))
   CFLAGS += -DSENSOR_MAX_RANGE_MM=$(RANGE)
+endif
+
+ifneq (, $(ROUNDROBIN))
+  CFLAGS += -DDEFAULT_ROUND_ROBIN=1
 endif
 
 CFLAGS += -DCLOCK_CORECLOCK=\(48000000U\)

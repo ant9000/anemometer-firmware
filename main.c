@@ -34,7 +34,10 @@ static hdc3020_data_t hdc3020_data[HDC3020_NUMOF];
 #define CH101_MAX_SAMPLES   (225)
 #define TRIGGER             GPIO_PIN(PA, 6)
 
-#define DEFAULT_CFG  {.mode=CH_MODE_TRIGGERED_TX_RX, .max_range=SENSOR_MAX_RANGE_MM, .sample_interval=0}
+#define DEFAULT_SONICLIB_CFG  {.mode=CH_MODE_TRIGGERED_TX_RX, .max_range=SENSOR_MAX_RANGE_MM, .sample_interval=0}
+#ifndef DEFAULT_ROUND_ROBIN
+#define DEFAULT_ROUND_ROBIN 0
+#endif
 
 #define MEASURE_PENDING     (1 << 0)
 #define DATA_READY_FLAG     (1 << 1)
@@ -57,6 +60,7 @@ static soniclib_data_t soniclib_data[SONICLIB_NUMOF];
 
 typedef struct {
     ch_config_t soniclib[SONICLIB_NUMOF];
+    bool round_robin;
 } config_t;
 static config_t configuration;
 
@@ -208,6 +212,7 @@ int config_cmd(int argc, char **argv) {
                 cfg->max_range
             );
         }
+        printf("Round-robin: %d\n", configuration.round_robin);
     } else if (strcmp(argv[1], "set") == 0) {
         // config set <sensor> <mode> <range>
         if (argc != 5)
@@ -228,12 +233,18 @@ int config_cmd(int argc, char **argv) {
         configuration.soniclib[dev_num].mode = mode;
         configuration.soniclib[dev_num].max_range = max_range;
         printf("Config set.\n");
+    } else if (strcmp(argv[1], "rr") == 0) {
+        // config rr <on/off>
+        if (argc != 3)
+            goto config_help;
+        configuration.round_robin = strcmp(argv[2], "1") == 0;
     } else if (strcmp(argv[1], "default") == 0) {
         // config default
         for (size_t i=0; i<SONICLIB_NUMOF; i++) {
-            ch_config_t cfg = DEFAULT_CFG;
+            ch_config_t cfg = DEFAULT_SONICLIB_CFG;
             memcpy(&configuration.soniclib[i], &cfg, sizeof(cfg));
         }
+        configuration.round_robin = DEFAULT_ROUND_ROBIN;
         printf("Config reset to default.\n");
     } else if (strcmp(argv[1], "load") == 0) {
         // config load
@@ -269,6 +280,7 @@ int config_cmd(int argc, char **argv) {
 config_help:
     printf("config show                        -- show current sensors config\n");
     printf("config set <SENSOR> <MODE> <RANGE> -- set mode and range for sensor; SENSOR in [0,%d]; MODE in [TXRX, RX]; RANGE in (0,250)\n", SONICLIB_NUMOF-1);
+    printf("config rr <ON/OFF>                 -- alternate TXRX and RX between sensors; ON/OFF in [0,1]\n");
     printf("config default                     -- reset config to default values\n");
     printf("config load                        -- load config from NVM\n");
     printf("config apply                       -- apply config to sensors\n");
@@ -347,9 +359,10 @@ int main(void) {
     } else {
         printf(" using defaults.\n");
         for (dev_num = 0; dev_num < num_ports; dev_num++) {
-            ch_config_t dev_config = DEFAULT_CFG;
+            ch_config_t dev_config = DEFAULT_SONICLIB_CFG;
             memcpy(&configuration.soniclib[dev_num], &dev_config, sizeof(dev_config));
         }
+        configuration.round_robin = DEFAULT_ROUND_ROBIN;
     }
 
     printf("Configuring sensor(s)...\n");
@@ -373,12 +386,21 @@ int main(void) {
     } else {
         gpio_init_int(TRIGGER, GPIO_IN, GPIO_FALLING, trigger_callback, NULL);
         printf("Starting measures\n\n");
+        uint8_t counter = 0;
         while (1) {
             if (taskflags == 0) {                                                                \
                 ztimer_sleep(ZTIMER_MSEC, 1);
             }
             if (taskflags & DATA_READY_FLAG) {
                 handle_data_ready(grp_ptr); // fetch available data
+                if (configuration.round_robin) {
+                    for (uint8_t i = 0; i < SONICLIB_NUMOF; i++) {
+                        configuration.soniclib[i].mode = CH_MODE_TRIGGERED_RX_ONLY;
+                    }
+                    configuration.soniclib[counter % SONICLIB_NUMOF].mode = CH_MODE_TRIGGERED_TX_RX;
+                    apply_configuration();
+                }
+                counter++;
                 taskflags = 0; // now we can start another measure
                 print_data(grp_ptr); // print data on console
             }
