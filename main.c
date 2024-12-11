@@ -145,7 +145,7 @@ static void print_data(ch_group_t *grp_ptr) {
     for (uint8_t dev_num = 0; dev_num < num_ports; dev_num++) {
         ch_dev_t *dev_ptr = ch_get_dev_ptr(grp_ptr, dev_num);
         if (ch_sensor_is_connected(dev_ptr)) {
-            printf("{\"ch101\":%d", dev_num);
+            printf("{\"ch101\":%d,\"mode\":\"%s\"", dev_num, (configuration.soniclib[dev_num].mode == CH_MODE_TRIGGERED_TX_RX ? "TXRX" : "RX"));
             if (soniclib_data[dev_num].range == CH_NO_TARGET) {
                 printf(",\"range_mm\":-1,\"amp\":-1");
             } else {
