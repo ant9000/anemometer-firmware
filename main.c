@@ -50,6 +50,7 @@ static uint32_t data_ready_devices;
 static uint8_t  num_connected_sensors = 0;
 
 typedef struct {
+    ch_mode_t      mode;
     uint32_t       range;
     uint16_t       amplitude;
     uint16_t       num_samples;
@@ -64,6 +65,7 @@ typedef struct {
 } config_t;
 static config_t configuration;
 
+static uint8_t counter = 0;
 static void apply_configuration(void)
 {
     ch_group_t *grp_ptr = &soniclib_group;
@@ -76,6 +78,9 @@ static void apply_configuration(void)
         if (ch_sensor_is_connected(dev_ptr)) {
             num_connected_sensors++;            // count one more connected
             active_devices |= (1 << dev_num);   // add to active device bit mask
+            if (configuration.round_robin) {
+                configuration.soniclib[dev_num].mode = (counter % SONICLIB_NUMOF == dev_num ? CH_MODE_TRIGGERED_TX_RX : CH_MODE_TRIGGERED_RX_ONLY);
+            }
             uint8_t res = ch_set_config(dev_ptr, &(configuration.soniclib[dev_num]));
             if (!res) {
                 ch_extra_display_config_info(dev_ptr);
@@ -84,6 +89,7 @@ static void apply_configuration(void)
             }
         }
     }
+    counter++;
 }
 
 static void trigger_callback(void *arg) {
@@ -117,11 +123,14 @@ static void handle_data_ready(ch_group_t *grp_ptr) {
     for (uint8_t dev_num = 0; dev_num < num_ports; dev_num++) {
         ch_dev_t *dev_ptr = ch_get_dev_ptr(grp_ptr, dev_num);
         if (ch_sensor_is_connected(dev_ptr)) {
-            soniclib_data[dev_num].range = ch_get_range(dev_ptr, CH_RANGE_ECHO_ROUND_TRIP);
-            soniclib_data[dev_num].amplitude = ch_get_amplitude(dev_ptr);
-            soniclib_data[dev_num].num_samples = ch_get_num_samples(dev_ptr);
-            int8_t res = ch_get_iq_data(dev_ptr, soniclib_data[dev_num].iq_data, 0, soniclib_data[dev_num].num_samples, CH_IO_MODE_BLOCK);
-            if (res != 0) { soniclib_data[dev_num].num_samples = 0; }
+            soniclib_data[dev_num].mode = ch_get_mode(dev_ptr);
+            if ((configuration.round_robin == 0) || (soniclib_data[dev_num].mode == CH_MODE_TRIGGERED_RX_ONLY)) {
+                soniclib_data[dev_num].range = ch_get_range(dev_ptr, CH_RANGE_ECHO_ROUND_TRIP);
+                soniclib_data[dev_num].amplitude = ch_get_amplitude(dev_ptr);
+                soniclib_data[dev_num].num_samples = ch_get_num_samples(dev_ptr);
+                int8_t res = ch_get_iq_data(dev_ptr, soniclib_data[dev_num].iq_data, 0, soniclib_data[dev_num].num_samples, CH_IO_MODE_BLOCK);
+                if (res != 0) { soniclib_data[dev_num].num_samples = 0; }
+            }
         }
     }
     for (uint8_t i = 0; i < HDC3020_NUMOF; i++) {
@@ -136,16 +145,19 @@ static void handle_data_ready(ch_group_t *grp_ptr) {
 
 static void print_data(ch_group_t *grp_ptr) {
     uint8_t num_ports = ch_get_num_ports(grp_ptr);
+    uint8_t _printed = 0;
     printf("[");
     for (uint8_t i = 0; i < HDC3020_NUMOF; i++) {
         if (hdc3020_data[i].connected) {
-            printf("{\"hdc3020\":%d,\"temp\":%.1f,\"rh\":%.1f},", i, hdc3020_data[i].temperature, hdc3020_data[i].humidity);
+            printf("%s{\"hdc3020\":%d,\"temp\":%.1f,\"rh\":%.1f}", (_printed? ",": ""), i, hdc3020_data[i].temperature, hdc3020_data[i].humidity);
+            _printed++;
         }
     }
     for (uint8_t dev_num = 0; dev_num < num_ports; dev_num++) {
         ch_dev_t *dev_ptr = ch_get_dev_ptr(grp_ptr, dev_num);
-        if (ch_sensor_is_connected(dev_ptr)) {
-            printf("{\"ch101\":%d,\"mode\":\"%s\"", dev_num, (configuration.soniclib[dev_num].mode == CH_MODE_TRIGGERED_TX_RX ? "TXRX" : "RX"));
+        if (ch_sensor_is_connected(dev_ptr) && ((configuration.round_robin == 0) || (soniclib_data[dev_num].mode == CH_MODE_TRIGGERED_RX_ONLY))) {
+            printf("%s{\"ch101\":%d,\"mode\":\"%s\"", (_printed? ",": ""), dev_num, (soniclib_data[dev_num].mode == CH_MODE_TRIGGERED_TX_RX ? "TXRX" : "RX"));
+            _printed++;
             if (soniclib_data[dev_num].range == CH_NO_TARGET) {
                 printf(",\"range_mm\":-1,\"amp\":-1");
             } else {
@@ -167,7 +179,6 @@ static void print_data(ch_group_t *grp_ptr) {
                 iq_ptr++;
             }
             printf("]}");
-            if (dev_num < num_ports-1) { printf(","); }
         }
     }
     printf("]\n");
@@ -190,6 +201,8 @@ int measure_cmd(int argc, char **argv) {
         }
         if (taskflags & DATA_READY_FLAG) {
             handle_data_ready(grp_ptr); // fetch available data
+            if (configuration.round_robin)
+                apply_configuration();
             taskflags = 0; // now we can start another measure
             print_data(grp_ptr); // print data on console
             break;
@@ -256,6 +269,7 @@ int config_cmd(int argc, char **argv) {
         }
     } else if (strcmp(argv[1], "apply") == 0) {
         // config apply
+        counter = 0;
         apply_configuration();
     } else if (strcmp(argv[1], "save") == 0) {
         // config save
@@ -386,21 +400,14 @@ int main(void) {
     } else {
         gpio_init_int(TRIGGER, GPIO_IN, GPIO_FALLING, trigger_callback, NULL);
         printf("Starting measures\n\n");
-        uint8_t counter = 0;
         while (1) {
             if (taskflags == 0) {                                                                \
                 ztimer_sleep(ZTIMER_MSEC, 1);
             }
             if (taskflags & DATA_READY_FLAG) {
                 handle_data_ready(grp_ptr); // fetch available data
-                if (configuration.round_robin) {
-                    for (uint8_t i = 0; i < SONICLIB_NUMOF; i++) {
-                        configuration.soniclib[i].mode = CH_MODE_TRIGGERED_RX_ONLY;
-                    }
-                    configuration.soniclib[counter % SONICLIB_NUMOF].mode = CH_MODE_TRIGGERED_TX_RX;
+                if (configuration.round_robin)
                     apply_configuration();
-                }
-                counter++;
                 taskflags = 0; // now we can start another measure
                 print_data(grp_ptr); // print data on console
             }
