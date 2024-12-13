@@ -20,13 +20,14 @@ typedef struct {
 } hdc3020_data_t;
 static hdc3020_data_t hdc3020_data[HDC3020_NUMOF];
 
-#ifdef SHORT_RANGE
-#include "ch101_gpr_sr.h"
-#define FW_INIT_FUNC ch101_gpr_sr_init
-#else
 #include "ch101_gpr.h"
+#include "ch101_gpr_sr.h"
+#include "ch101_gpr_sr_open.h"
+/*
 #define FW_INIT_FUNC ch101_gpr_init
-#endif
+#define FW_INIT_FUNC ch101_gpr_sr_open_init
+*/
+#define FW_INIT_FUNC ch101_gpr_sr_init
 
 #ifndef SENSOR_MAX_RANGE_MM
 #define SENSOR_MAX_RANGE_MM (120)   // maximum range, in mm

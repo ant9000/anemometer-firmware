@@ -9,7 +9,7 @@ DEVELHELP ?= 1
 QUIET ?= 1
 PORT ?= /dev/ttyUSB0
 BAUD ?= 576000
-SR ?= 1
+FIRMWARE ?= sr
 RANGE ?= 201
 ROUNDROBIN ?=
 
@@ -39,12 +39,15 @@ HDC3020_SENSORS += "{.i2c_dev=ACME2_I2C_DEV,.i2c_addr=HDC3020_PARAM_I2C_ADDR,.al
 CFLAGS += -DHDC3020_PARAMS="$(HDC3020_SENSORS)"
 CFLAGS += -DHDC3020_SAULINFO="{.name=\"hdc3020-0\"},{.name=\"hdc3020-1\"}"
 
-
 EXTERNAL_MODULE_DIRS += fw
 USEMODULE += ch101
 
-ifeq (1, $(SR))
+ifeq (sr, $(FIRMWARE))
   CFLAGS += -DSHORT_RANGE
+endif
+
+ifeq (sr_open, $(FIRMWARE))
+  CFLAGS += -DSHORT_RANGE_OPEN
 endif
 
 ifneq (, $(RANGE))
