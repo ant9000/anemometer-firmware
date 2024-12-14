@@ -42,14 +42,6 @@ CFLAGS += -DHDC3020_SAULINFO="{.name=\"hdc3020-0\"},{.name=\"hdc3020-1\"}"
 EXTERNAL_MODULE_DIRS += fw
 USEMODULE += ch101
 
-ifeq (sr, $(FIRMWARE))
-  CFLAGS += -DSHORT_RANGE
-endif
-
-ifeq (sr_open, $(FIRMWARE))
-  CFLAGS += -DSHORT_RANGE_OPEN
-endif
-
 ifneq (, $(RANGE))
   CFLAGS += -DSENSOR_MAX_RANGE_MM=$(RANGE)
 endif
@@ -57,6 +49,19 @@ endif
 ifneq (, $(ROUNDROBIN))
   CFLAGS += -DDEFAULT_ROUND_ROBIN=1
 endif
+
+ifeq (gpr, $(FIRMWARE))
+  CFLAGS += -DDEFAULT_FW_INIT_FUNC=ch101_gpr_init
+else ifeq (sr, $(FIRMWARE))
+  CFLAGS += -DDEFAULT_FW_INIT_FUNC=ch101_gpr_sr_init
+else ifeq (open, $(FIRMWARE))
+  CFLAGS += -DDEFAULT_FW_INIT_FUNC=ch101_gpr_sr_open_init
+else ifeq (narrow, $(FIRMWARE))
+  CFLAGS += -DDEFAULT_FW_INIT_FUNC=ch101_gpr_sr_narrow_init
+else
+  $(error "Firmware '$(FIRMWARE)' is unsupported.")
+endif
+
 
 CFLAGS += -DCLOCK_CORECLOCK=\(48000000U\)
 CFLAGS += -DSTDIO_UART_BAUDRATE=$(BAUD)

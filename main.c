@@ -23,11 +23,7 @@ static hdc3020_data_t hdc3020_data[HDC3020_NUMOF];
 #include "ch101_gpr.h"
 #include "ch101_gpr_sr.h"
 #include "ch101_gpr_sr_open.h"
-/*
-#define FW_INIT_FUNC ch101_gpr_init
-#define FW_INIT_FUNC ch101_gpr_sr_open_init
-*/
-#define FW_INIT_FUNC ch101_gpr_sr_init
+#include "ch101_gpr_sr_narrow.h"
 
 #ifndef SENSOR_MAX_RANGE_MM
 #define SENSOR_MAX_RANGE_MM (120)   // maximum range, in mm
@@ -35,9 +31,14 @@ static hdc3020_data_t hdc3020_data[HDC3020_NUMOF];
 #define CH101_MAX_SAMPLES   (225)
 #define TRIGGER             GPIO_PIN(PA, 6)
 
+#ifndef DEFAULT_SONICLIB_CFG
 #define DEFAULT_SONICLIB_CFG  {.mode=CH_MODE_TRIGGERED_TX_RX, .max_range=SENSOR_MAX_RANGE_MM, .sample_interval=0}
+#endif
 #ifndef DEFAULT_ROUND_ROBIN
 #define DEFAULT_ROUND_ROBIN 0
+#endif
+#ifndef DEFAULT_FW_INIT_FUNC
+#define DEFAULT_FW_INIT_FUNC ch101_gpr_sr_init
 #endif
 
 #define MEASURE_PENDING     (1 << 0)
@@ -63,6 +64,7 @@ static soniclib_data_t soniclib_data[SONICLIB_NUMOF];
 typedef struct {
     ch_config_t soniclib[SONICLIB_NUMOF];
     bool round_robin;
+    ch_fw_init_func_t fw_init_func;
 } config_t;
 static config_t configuration;
 
@@ -185,7 +187,7 @@ static void print_data(ch_group_t *grp_ptr) {
     printf("]\n");
 }
 
-int measure_cmd(int argc, char **argv) {
+static int measure_cmd(int argc, char **argv) {
     (void)argc;
     (void)argv;
     ch_group_t *grp_ptr = &soniclib_group;
@@ -212,46 +214,93 @@ int measure_cmd(int argc, char **argv) {
     return 0;
 }
 
-int config_cmd(int argc, char **argv) {
+static int config_help (void) {
+    printf("config show                        -- show current sensors config\n");
+    printf("config set <SENSOR> <MODE> <RANGE> -- set mode and range for sensor; SENSOR in [0,%d]; MODE in [txrx, rx]; RANGE in (0,250)\n", SONICLIB_NUMOF-1);
+    printf("config rr <ON/OFF>                 -- alternate TXRX and RX between sensors; ON/OFF in [0,1]\n");
+    printf("config fw <FW>                     -- set firmware for sensors; FW in [gpr, sr, open, narrow]\n");
+    printf("config default                     -- reset config to default values\n");
+    printf("config load                        -- load config from NVM\n");
+    printf("config apply                       -- apply config to sensors\n");
+    printf("config save                        -- save config to NVM\n");
+    printf("config erase                       -- erase NVM\n");
+    return 1;
+}
+
+static int config_show (void) {
+    for (size_t i=0; i<SONICLIB_NUMOF; i++) {
+        ch_config_t *cfg = &configuration.soniclib[i];
+        printf(
+            "CH101[%d]: mode=%s, range=%d mm\n",
+            i,
+            (cfg->mode == CH_MODE_TRIGGERED_TX_RX ? "TXRX" : "RX"),
+            cfg->max_range
+        );
+    }
+    printf("Round-robin: %d\n", configuration.round_robin);
+    printf("Firmware: ");
+    if (configuration.fw_init_func == ch101_gpr_init) {
+        printf("gpr\n");
+    } else if (configuration.fw_init_func == ch101_gpr_sr_init) {
+        printf("sr\n");
+    } else if (configuration.fw_init_func == ch101_gpr_sr_open_init) {
+        printf("open\n");
+    } else if (configuration.fw_init_func == ch101_gpr_sr_narrow_init) {
+        printf("narror\n");
+    } else {
+        printf("UNKNOWN\n");
+    }
+    return 0;
+}
+
+static int config_cmd(int argc, char **argv) {
     if (argc == 1) {
-        goto config_help;
+        return config_help();
     } else if (strcmp(argv[1], "show") == 0) {
         // config show
-        for (size_t i=0; i<SONICLIB_NUMOF; i++) {
-            ch_config_t *cfg = &configuration.soniclib[i];
-            printf(
-                "CH101[%d]: mode=%s, range=%d mm\n",
-                i,
-                (cfg->mode == CH_MODE_TRIGGERED_TX_RX ? "TXRX" : "RX"),
-                cfg->max_range
-            );
-        }
-        printf("Round-robin: %d\n", configuration.round_robin);
+        return config_show();
     } else if (strcmp(argv[1], "set") == 0) {
         // config set <sensor> <mode> <range>
         if (argc != 5)
-            goto config_help;
+            return config_help();
         int dev_num = atoi(argv[2]);
         if ((dev_num < 0) || (dev_num >= (int)SONICLIB_NUMOF))
-            goto config_help;
+            return config_help();
         ch_mode_t mode;
         if ((strcmp(argv[3], "txrx") == 0) || (strcmp(argv[3], "TXRX") == 0)) {
             mode = CH_MODE_TRIGGERED_TX_RX;
         } else if ((strcmp(argv[3], "rx") == 0) || (strcmp(argv[3], "RX") == 0)) {
             mode = CH_MODE_TRIGGERED_RX_ONLY;
         } else
-            goto config_help;
+            return config_help();
         int max_range = atoi(argv[4]);
         if ((max_range <= 0) || (max_range >= 250))
-            goto config_help;
+            return config_help();
         configuration.soniclib[dev_num].mode = mode;
         configuration.soniclib[dev_num].max_range = max_range;
         printf("Config set.\n");
     } else if (strcmp(argv[1], "rr") == 0) {
-        // config rr <on/off>
+        // config rr <0|1>
         if (argc != 3)
-            goto config_help;
+            return config_help();
         configuration.round_robin = strcmp(argv[2], "1") == 0;
+    } else if (strcmp(argv[1], "fw") == 0) {
+        // config fw <gpr|sr|open|narrow>
+        if (argc != 3)
+            return config_help();
+        ch_fw_init_func_t fw_init_func;
+        if (strcmp(argv[2], "gpr") == 0) {
+            fw_init_func = ch101_gpr_init;
+        } else if (strcmp(argv[2], "sr") == 0) {
+            fw_init_func = ch101_gpr_sr_init;
+        } else if (strcmp(argv[2], "open") == 0) {
+            fw_init_func = ch101_gpr_sr_open_init;
+        } else if (strcmp(argv[2], "narrow") == 0) {
+            fw_init_func = ch101_gpr_sr_narrow_init;
+        } else {
+            return config_help();
+        }
+        configuration.fw_init_func = fw_init_func;
     } else if (strcmp(argv[1], "default") == 0) {
         // config default
         for (size_t i=0; i<SONICLIB_NUMOF; i++) {
@@ -259,6 +308,7 @@ int config_cmd(int argc, char **argv) {
             memcpy(&configuration.soniclib[i], &cfg, sizeof(cfg));
         }
         configuration.round_robin = DEFAULT_ROUND_ROBIN;
+        configuration.fw_init_func = DEFAULT_FW_INIT_FUNC;
         printf("Config reset to default.\n");
     } else if (strcmp(argv[1], "load") == 0) {
         // config load
@@ -289,19 +339,8 @@ int config_cmd(int argc, char **argv) {
             printf("[ERROR] Config erasing failed: %d.\n", res);
         }
     } else {
-        goto config_help;
+        return config_help();
     }
-    goto config_end;
-config_help:
-    printf("config show                        -- show current sensors config\n");
-    printf("config set <SENSOR> <MODE> <RANGE> -- set mode and range for sensor; SENSOR in [0,%d]; MODE in [TXRX, RX]; RANGE in (0,250)\n", SONICLIB_NUMOF-1);
-    printf("config rr <ON/OFF>                 -- alternate TXRX and RX between sensors; ON/OFF in [0,1]\n");
-    printf("config default                     -- reset config to default values\n");
-    printf("config load                        -- load config from NVM\n");
-    printf("config apply                       -- apply config to sensors\n");
-    printf("config save                        -- save config to NVM\n");
-    printf("config erase                       -- erase NVM\n");
-config_end:
     return 0;
 }
 
@@ -319,7 +358,21 @@ int main(void) {
     uint8_t num_ports;
     uint8_t dev_num;
 
-	printf("TDK InvenSense\n");
+    printf("\nLoading configuration...");
+    if (load_from_nvm(&configuration, sizeof(configuration)) == 0) {
+        printf(" found in flash.\n");
+    } else {
+        printf(" using defaults.\n");
+        for (size_t i=0; i<SONICLIB_NUMOF; i++) {
+            ch_config_t dev_config = DEFAULT_SONICLIB_CFG;
+            memcpy(&configuration.soniclib[i], &dev_config, sizeof(dev_config));
+        }
+        configuration.round_robin = DEFAULT_ROUND_ROBIN;
+        configuration.fw_init_func = DEFAULT_FW_INIT_FUNC;
+    }
+    config_show();
+
+	printf("\nTDK InvenSense\n");
 	printf("    Compile time:  %s %s\n", __DATE__, __TIME__);
 	printf("    SonicLib version: %u.%u.%u\n", SONICLIB_VER_MAJOR, SONICLIB_VER_MINOR, SONICLIB_VER_REV);
 
@@ -336,7 +389,7 @@ int main(void) {
     num_ports = ch_get_num_ports(grp_ptr);
     for (dev_num = 0; dev_num < num_ports; dev_num++) {
         ch_dev_t *dev_ptr = &(soniclib_devices[dev_num]);
-        res |= ch_init(dev_ptr, grp_ptr, dev_num, FW_INIT_FUNC);
+        res |= ch_init(dev_ptr, grp_ptr, dev_num, configuration.fw_init_func);
     }
     if (res == 0) {
         printf("starting group...\n");
@@ -367,18 +420,6 @@ int main(void) {
 
     // Register callback function for measure ready interrupt
     ch_io_int_callback_set(grp_ptr, sensor_int_callback);
-
-    printf("Loading configuration...");
-    if (load_from_nvm(&configuration, sizeof(configuration)) == 0) {
-        printf(" found in flash.\n");
-    } else {
-        printf(" using defaults.\n");
-        for (dev_num = 0; dev_num < num_ports; dev_num++) {
-            ch_config_t dev_config = DEFAULT_SONICLIB_CFG;
-            memcpy(&configuration.soniclib[dev_num], &dev_config, sizeof(dev_config));
-        }
-        configuration.round_robin = DEFAULT_ROUND_ROBIN;
-    }
 
     printf("Configuring sensor(s)...\n");
     apply_configuration();
