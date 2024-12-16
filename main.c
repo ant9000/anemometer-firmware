@@ -4,6 +4,7 @@
 #include "shell.h"
 
 #include "soniclib.h"
+#include "ch_driver.h"
 #include "ch_extra_display_utils.h"
 #include "soniclib_params.h"
 #include "persistence.h"
@@ -43,6 +44,9 @@ static hdc3020_data_t hdc3020_data[HDC3020_NUMOF];
 #ifndef DEFAULT_RX_PRETRIGGER
 #define DEFAULT_RX_PRETRIGGER 0
 #endif
+#ifndef DEFAULT_RX_PRETRIGGER_DELAY_US
+#define DEFAULT_RX_PRETRIGGER_DELAY_US CHDRV_PRETRIGGER_DELAY_US
+#endif
 
 #define MEASURE_PENDING     (1 << 0)
 #define DATA_READY_FLAG     (1 << 1)
@@ -69,6 +73,7 @@ typedef struct {
     bool round_robin;
     char firmware[10];
     bool rx_pretrigger;
+    uint16_t rx_pretrigger_delay_us;
 } config_t;
 static config_t configuration;
 
@@ -96,7 +101,7 @@ static void apply_configuration(void)
             }
         }
     }
-    ch_set_rx_pretrigger(grp_ptr, configuration.rx_pretrigger);
+    chdrv_pretrigger_delay_set(grp_ptr, configuration.rx_pretrigger ? configuration.rx_pretrigger_delay_us : 0);
     counter++;
 }
 
@@ -233,7 +238,7 @@ static int config_help (void) {
     printf("config set <SENSOR> <MODE> <RANGE> -- set mode and range for sensor; SENSOR in [0,%d]; MODE in [txrx, rx]; RANGE in (0,500)\n", SONICLIB_NUMOF-1);
     printf("config rr <ON/OFF>                 -- alternate TXRX and RX between sensors; ON/OFF in [0,1]\n");
     printf("config fw <FW>                     -- set firmware for sensors; FW in [gpr, sr, open, narrow]\n");
-    printf("config pt <ON/OFF>                 -- enable RX pretrigger for receiving sensors; ON/OFF in [0,1]\n");
+    printf("config pt <ON/OFF> [DELAY]         -- enable RX pretrigger for receiving sensors; ON/OFF in [0,1]; DELAY is in us\n");
     printf("config default                     -- reset config to default values\n");
     printf("config load                        -- load config from NVM\n");
     printf("config apply                       -- apply config to sensors\n");
@@ -268,7 +273,7 @@ static void config_show (void) {
     }
     printf("Round-robin: %d\n", configuration.round_robin);
     printf("Firmware: %s\n", configuration.firmware);
-    printf("RX pretrigger: %d\n", configuration.rx_pretrigger);
+    printf("RX pretrigger: %d, delay: %d us\n", configuration.rx_pretrigger, configuration.rx_pretrigger_delay_us);
 }
 
 static void config_default(void) {
@@ -278,6 +283,7 @@ static void config_default(void) {
     configuration.round_robin = DEFAULT_ROUND_ROBIN;
     strncpy(configuration.firmware, DEFAULT_FIRMWARE, sizeof(configuration.firmware));
     configuration.rx_pretrigger = DEFAULT_RX_PRETRIGGER;
+    configuration.rx_pretrigger_delay_us = DEFAULT_RX_PRETRIGGER_DELAY_US;
 }
 
 static int config_cmd(int argc, char **argv) {
@@ -319,10 +325,12 @@ static int config_cmd(int argc, char **argv) {
         strncpy(configuration.firmware, argv[2], sizeof(configuration.firmware));
         printf("Config firmware set. Save config and reboot to use it.\n");
     } else if (strcmp(argv[1], "pt") == 0) {
-        // config pt <0|1>
-        if (argc != 3)
+        // config pt <0|1> [delay]
+        if ((argc != 3) && (argc != 4))
             return config_help();
         configuration.rx_pretrigger = strcmp(argv[2], "1") == 0;
+        if (argc == 4)
+            configuration.rx_pretrigger_delay_us = atoi(argv[3]);
         printf("Config pretrigger set.\n");
     } else if (strcmp(argv[1], "default") == 0) {
         // config default
