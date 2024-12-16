@@ -415,18 +415,38 @@ int main(void) {
 
     printf("Sensor\tType \t   Freq\t\t RTC Cal \tFirmware\n");
 
+    uint8_t num_connected_sensors = 0;
+    uint32_t group_freq = 0;
     for (dev_num = 0; dev_num < num_ports; dev_num++) {
         ch_dev_t *dev_ptr = ch_get_dev_ptr(grp_ptr, dev_num);
         if (ch_sensor_is_connected(dev_ptr)) {
-            printf("%d\tCH%d\t %u Hz\t%u@%ums\t%s\n", dev_num,
+            num_connected_sensors++;
+            uint32_t freq = ch_get_frequency(dev_ptr);
+            group_freq += freq;
+            printf("%d\tCH%d\t %lu Hz\t%u@%ums\t%s\n", dev_num,
                                     ch_get_part_number(dev_ptr),
-                                    (unsigned int) ch_get_frequency(dev_ptr),
+                                    freq,
                                     ch_get_rtc_cal_result(dev_ptr),
                                     ch_get_rtc_cal_pulselength(dev_ptr),
                                     ch_get_fw_version_string(dev_ptr));
         }
     }
     printf("\n");
+    if (num_connected_sensors)
+        group_freq /= num_connected_sensors;
+
+    if (ch_group_set_frequency(grp_ptr, group_freq) == 0) {
+        printf("Group nominal frequency: %lu Hz\n", ch_group_get_frequency(grp_ptr));
+        printf("After adjustment:\n");
+        for (dev_num = 0; dev_num < num_ports; dev_num++) {
+            ch_dev_t *dev_ptr = ch_get_dev_ptr(grp_ptr, dev_num);
+            if (ch_sensor_is_connected(dev_ptr)) {
+                printf("%d: %lu Hz\n", dev_num, ch_get_frequency(dev_ptr));
+            }
+        }
+    } else {
+        printf("Firmware '%s' does not support setting a group frequency.\n", configuration.firmware);
+    }
 
     // Register callback function for measure ready interrupt
     ch_io_int_callback_set(grp_ptr, sensor_int_callback);
