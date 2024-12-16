@@ -155,7 +155,8 @@ static void handle_data_ready(ch_group_t *grp_ptr) {
 static void print_data(ch_group_t *grp_ptr) {
     uint8_t num_ports = ch_get_num_ports(grp_ptr);
     uint8_t _printed = 0;
-    printf("[");
+    printf("[{\"round-robin\":%d, \"firmware\":\"%s\",\"pretrigger\":%d}", configuration.round_robin, configuration.firmware, configuration.rx_pretrigger);
+    _printed++;
     for (uint8_t i = 0; i < HDC3020_NUMOF; i++) {
         if (hdc3020_data[i].connected) {
             printf("%s{\"hdc3020\":%d,\"temp\":%.1f,\"rh\":%.1f}", (_printed? ",": ""), i, hdc3020_data[i].temperature, hdc3020_data[i].humidity);
@@ -165,7 +166,10 @@ static void print_data(ch_group_t *grp_ptr) {
     for (uint8_t dev_num = 0; dev_num < num_ports; dev_num++) {
         ch_dev_t *dev_ptr = ch_get_dev_ptr(grp_ptr, dev_num);
         if (ch_sensor_is_connected(dev_ptr) && ((configuration.round_robin == 0) || (soniclib_data[dev_num].mode == CH_MODE_TRIGGERED_RX_ONLY))) {
-            printf("%s{\"ch101\":%d,\"mode\":\"%s\"", (_printed? ",": ""), dev_num, (soniclib_data[dev_num].mode == CH_MODE_TRIGGERED_TX_RX ? "TXRX" : "RX"));
+            printf(
+                "%s{\"ch101\":%d,\"mode\":\"%s\",\"max_range_mm\":%d", (_printed? ",": ""), dev_num,
+                (soniclib_data[dev_num].mode == CH_MODE_TRIGGERED_TX_RX ? "TXRX" : "RX"), configuration.soniclib[dev_num].max_range
+            );
             _printed++;
             if (soniclib_data[dev_num].range == CH_NO_TARGET) {
                 printf(",\"range_mm\":-1,\"amp\":-1");
