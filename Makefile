@@ -12,6 +12,8 @@ BAUD ?= 576000
 FIRMWARE ?= sr
 RANGE ?= 201
 ROUNDROBIN ?=
+PRETRIGGER ?=
+ERASE ?=
 
 USEMODULE += od
 USEMODULE += od_string
@@ -47,21 +49,27 @@ ifneq (, $(RANGE))
 endif
 
 ifneq (, $(ROUNDROBIN))
+else ifneq (0, $(ROUNDROBIN))
   CFLAGS += -DDEFAULT_ROUND_ROBIN=1
 endif
 
+ifneq (, $(PRETRIGGER))
+else ifneq (0, $(PRETRIGGER))
+  CFLAGS += -DDEFAULT_RX_PRETRIGGER=1
+endif
+
 ifeq (gpr, $(FIRMWARE))
-  CFLAGS += -DDEFAULT_FW_INIT_FUNC=ch101_gpr_init
 else ifeq (sr, $(FIRMWARE))
-  CFLAGS += -DDEFAULT_FW_INIT_FUNC=ch101_gpr_sr_init
 else ifeq (open, $(FIRMWARE))
-  CFLAGS += -DDEFAULT_FW_INIT_FUNC=ch101_gpr_sr_open_init
 else ifeq (narrow, $(FIRMWARE))
-  CFLAGS += -DDEFAULT_FW_INIT_FUNC=ch101_gpr_sr_narrow_init
 else
   $(error "Firmware '$(FIRMWARE)' is unsupported.")
 endif
+CFLAGS += -DDEFAULT_FIRMWARE="\"$(FIRMWARE)\""
 
+ifneq (, $(ERASE))
+  EDBG_ARGS += --erase
+endif
 
 CFLAGS += -DCLOCK_CORECLOCK=\(48000000U\)
 CFLAGS += -DSTDIO_UART_BAUDRATE=$(BAUD)

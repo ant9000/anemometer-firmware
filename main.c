@@ -37,8 +37,11 @@ static hdc3020_data_t hdc3020_data[HDC3020_NUMOF];
 #ifndef DEFAULT_ROUND_ROBIN
 #define DEFAULT_ROUND_ROBIN 0
 #endif
-#ifndef DEFAULT_FW_INIT_FUNC
-#define DEFAULT_FW_INIT_FUNC ch101_gpr_sr_init
+#ifndef DEFAULT_FIRMWARE
+#define DEFAULT_FIRMWARE "sr"
+#endif
+#ifndef DEFAULT_RX_PRETRIGGER
+#define DEFAULT_RX_PRETRIGGER 0
 #endif
 
 #define MEASURE_PENDING     (1 << 0)
@@ -48,7 +51,7 @@ volatile uint32_t taskflags = 0;
 
 
 static uint32_t active_devices;
-static uint32_t data_ready_devices;
+static uint32_t data_ready_devices = 0;
 static uint8_t  num_connected_sensors = 0;
 
 typedef struct {
@@ -64,7 +67,8 @@ static soniclib_data_t soniclib_data[SONICLIB_NUMOF];
 typedef struct {
     ch_config_t soniclib[SONICLIB_NUMOF];
     bool round_robin;
-    ch_fw_init_func_t fw_init_func;
+    char firmware[10];
+    bool rx_pretrigger;
 } config_t;
 static config_t configuration;
 
@@ -92,6 +96,7 @@ static void apply_configuration(void)
             }
         }
     }
+    ch_set_rx_pretrigger(grp_ptr, configuration.rx_pretrigger);
     counter++;
 }
 
@@ -110,12 +115,13 @@ static void trigger_callback(void *arg) {
 
 static void sensor_int_callback(ch_group_t *grp_ptr, uint8_t dev_num, ch_interrupt_type_t int_type) {
     (void)int_type;
+    (void)grp_ptr;
     data_ready_devices |= (1 << dev_num);       // add to data-ready bit mask
     if (data_ready_devices == active_devices) {
         // All active sensors have interrupted after performing a measurement
         data_ready_devices = 0;
         // Set data-ready flag - it will be checked in main() loop
-        taskflags |= DATA_READY_FLAG;
+        taskflags = DATA_READY_FLAG;
         chdrv_int_group_interrupt_disable(grp_ptr);
     }
 }
@@ -191,17 +197,14 @@ static int measure_cmd(int argc, char **argv) {
     (void)argc;
     (void)argv;
     ch_group_t *grp_ptr = &soniclib_group;
-    taskflags |= MEASURE_PENDING;
     for (uint8_t i = 0; i < HDC3020_NUMOF; i++) {
         if (hdc3020_data[i].connected) {
             hdc3020_trigger_on_demand_measurement(&hdc3020_devs[i], 0);
         }
     }
     ch_group_trigger(&soniclib_group);
-    while (1) {
-        if (taskflags == 0) {                                                                \
-            ztimer_sleep(ZTIMER_MSEC, 1);
-        }
+    uint32_t counter = 0;
+    while (counter < 1000) {
         if (taskflags & DATA_READY_FLAG) {
             handle_data_ready(grp_ptr); // fetch available data
             if (configuration.round_robin)
@@ -209,16 +212,24 @@ static int measure_cmd(int argc, char **argv) {
             taskflags = 0; // now we can start another measure
             print_data(grp_ptr); // print data on console
             break;
+        } else {
+            ztimer_sleep(ZTIMER_MSEC, 1);
+            counter++;
         }
+    }
+    if (counter == 1000) {
+        printf("Timed out!\n");
+        return 1;
     }
     return 0;
 }
 
 static int config_help (void) {
     printf("config show                        -- show current sensors config\n");
-    printf("config set <SENSOR> <MODE> <RANGE> -- set mode and range for sensor; SENSOR in [0,%d]; MODE in [txrx, rx]; RANGE in (0,250)\n", SONICLIB_NUMOF-1);
+    printf("config set <SENSOR> <MODE> <RANGE> -- set mode and range for sensor; SENSOR in [0,%d]; MODE in [txrx, rx]; RANGE in (0,500)\n", SONICLIB_NUMOF-1);
     printf("config rr <ON/OFF>                 -- alternate TXRX and RX between sensors; ON/OFF in [0,1]\n");
     printf("config fw <FW>                     -- set firmware for sensors; FW in [gpr, sr, open, narrow]\n");
+    printf("config pt <ON/OFF>                 -- enable RX pretrigger for receiving sensors; ON/OFF in [0,1]\n");
     printf("config default                     -- reset config to default values\n");
     printf("config load                        -- load config from NVM\n");
     printf("config apply                       -- apply config to sensors\n");
@@ -227,7 +238,21 @@ static int config_help (void) {
     return 1;
 }
 
-static int config_show (void) {
+static ch_fw_init_func_t fw_init_func(char *firmware) {
+    ch_fw_init_func_t func = NULL;
+    if (strcmp(firmware, "gpr") == 0) {
+        func = ch101_gpr_init;
+    } else if (strcmp(firmware, "sr") == 0) {
+        func = ch101_gpr_sr_init;
+    } else if (strcmp(firmware, "open") == 0) {
+        func = ch101_gpr_sr_open_init;
+    } else if (strcmp(firmware, "narrow") == 0) {
+        func = ch101_gpr_sr_narrow_init;
+    }
+    return func;
+}
+
+static void config_show (void) {
     for (size_t i=0; i<SONICLIB_NUMOF; i++) {
         ch_config_t *cfg = &configuration.soniclib[i];
         printf(
@@ -238,19 +263,17 @@ static int config_show (void) {
         );
     }
     printf("Round-robin: %d\n", configuration.round_robin);
-    printf("Firmware: ");
-    if (configuration.fw_init_func == ch101_gpr_init) {
-        printf("gpr\n");
-    } else if (configuration.fw_init_func == ch101_gpr_sr_init) {
-        printf("sr\n");
-    } else if (configuration.fw_init_func == ch101_gpr_sr_open_init) {
-        printf("open\n");
-    } else if (configuration.fw_init_func == ch101_gpr_sr_narrow_init) {
-        printf("narror\n");
-    } else {
-        printf("UNKNOWN\n");
-    }
-    return 0;
+    printf("Firmware: %s\n", configuration.firmware);
+    printf("RX pretrigger: %d\n", configuration.rx_pretrigger);
+}
+
+static void config_default(void) {
+    ch_config_t cfg = DEFAULT_SONICLIB_CFG;
+    for (size_t i=0; i<SONICLIB_NUMOF; i++)
+        memcpy(&configuration.soniclib[i], &cfg, sizeof(cfg));
+    configuration.round_robin = DEFAULT_ROUND_ROBIN;
+    strncpy(configuration.firmware, DEFAULT_FIRMWARE, sizeof(configuration.firmware));
+    configuration.rx_pretrigger = DEFAULT_RX_PRETRIGGER;
 }
 
 static int config_cmd(int argc, char **argv) {
@@ -258,7 +281,7 @@ static int config_cmd(int argc, char **argv) {
         return config_help();
     } else if (strcmp(argv[1], "show") == 0) {
         // config show
-        return config_show();
+        config_show();
     } else if (strcmp(argv[1], "set") == 0) {
         // config set <sensor> <mode> <range>
         if (argc != 5)
@@ -274,7 +297,7 @@ static int config_cmd(int argc, char **argv) {
         } else
             return config_help();
         int max_range = atoi(argv[4]);
-        if ((max_range <= 0) || (max_range >= 250))
+        if ((max_range <= 0) || (max_range >= 500))
             return config_help();
         configuration.soniclib[dev_num].mode = mode;
         configuration.soniclib[dev_num].max_range = max_range;
@@ -284,31 +307,22 @@ static int config_cmd(int argc, char **argv) {
         if (argc != 3)
             return config_help();
         configuration.round_robin = strcmp(argv[2], "1") == 0;
+        printf("Config round-robin set.\n");
     } else if (strcmp(argv[1], "fw") == 0) {
         // config fw <gpr|sr|open|narrow>
+        if ((argc != 3) || (fw_init_func(argv[2]) == NULL))
+            return config_help();
+        strncpy(configuration.firmware, argv[2], sizeof(configuration.firmware));
+        printf("Config firmware set. Save config and reboot to use it.\n");
+    } else if (strcmp(argv[1], "pt") == 0) {
+        // config pt <0|1>
         if (argc != 3)
             return config_help();
-        ch_fw_init_func_t fw_init_func;
-        if (strcmp(argv[2], "gpr") == 0) {
-            fw_init_func = ch101_gpr_init;
-        } else if (strcmp(argv[2], "sr") == 0) {
-            fw_init_func = ch101_gpr_sr_init;
-        } else if (strcmp(argv[2], "open") == 0) {
-            fw_init_func = ch101_gpr_sr_open_init;
-        } else if (strcmp(argv[2], "narrow") == 0) {
-            fw_init_func = ch101_gpr_sr_narrow_init;
-        } else {
-            return config_help();
-        }
-        configuration.fw_init_func = fw_init_func;
+        configuration.rx_pretrigger = strcmp(argv[2], "1") == 0;
+        printf("Config pretrigger set.\n");
     } else if (strcmp(argv[1], "default") == 0) {
         // config default
-        for (size_t i=0; i<SONICLIB_NUMOF; i++) {
-            ch_config_t cfg = DEFAULT_SONICLIB_CFG;
-            memcpy(&configuration.soniclib[i], &cfg, sizeof(cfg));
-        }
-        configuration.round_robin = DEFAULT_ROUND_ROBIN;
-        configuration.fw_init_func = DEFAULT_FW_INIT_FUNC;
+        config_default();
         printf("Config reset to default.\n");
     } else if (strcmp(argv[1], "load") == 0) {
         // config load
@@ -322,6 +336,7 @@ static int config_cmd(int argc, char **argv) {
         // config apply
         counter = 0;
         apply_configuration();
+        printf("Config applied.\n");
     } else if (strcmp(argv[1], "save") == 0) {
         // config save
         int res = save_to_nvm(&configuration, sizeof(configuration));
@@ -362,13 +377,8 @@ int main(void) {
     if (load_from_nvm(&configuration, sizeof(configuration)) == 0) {
         printf(" found in flash.\n");
     } else {
+        config_default();
         printf(" using defaults.\n");
-        for (size_t i=0; i<SONICLIB_NUMOF; i++) {
-            ch_config_t dev_config = DEFAULT_SONICLIB_CFG;
-            memcpy(&configuration.soniclib[i], &dev_config, sizeof(dev_config));
-        }
-        configuration.round_robin = DEFAULT_ROUND_ROBIN;
-        configuration.fw_init_func = DEFAULT_FW_INIT_FUNC;
     }
     config_show();
 
@@ -389,7 +399,7 @@ int main(void) {
     num_ports = ch_get_num_ports(grp_ptr);
     for (dev_num = 0; dev_num < num_ports; dev_num++) {
         ch_dev_t *dev_ptr = &(soniclib_devices[dev_num]);
-        res |= ch_init(dev_ptr, grp_ptr, dev_num, configuration.fw_init_func);
+        res |= ch_init(dev_ptr, grp_ptr, dev_num, fw_init_func(configuration.firmware));
     }
     if (res == 0) {
         printf("starting group...\n");
@@ -443,15 +453,14 @@ int main(void) {
         gpio_init_int(TRIGGER, GPIO_IN, GPIO_FALLING, trigger_callback, NULL);
         printf("Starting measures\n\n");
         while (1) {
-            if (taskflags == 0) {                                                                \
-                ztimer_sleep(ZTIMER_MSEC, 1);
-            }
             if (taskflags & DATA_READY_FLAG) {
                 handle_data_ready(grp_ptr); // fetch available data
                 if (configuration.round_robin)
                     apply_configuration();
                 taskflags = 0; // now we can start another measure
                 print_data(grp_ptr); // print data on console
+            } else {
+                ztimer_sleep(ZTIMER_MSEC, 1);
             }
         }
     }
