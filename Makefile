@@ -48,13 +48,15 @@ ifneq (, $(RANGE))
   CFLAGS += -DSENSOR_MAX_RANGE_MM=$(RANGE)
 endif
 
-ifneq (, $(ROUNDROBIN))
-else ifneq (0, $(ROUNDROBIN))
+ifeq (, $(ROUNDROBIN))
+else ifeq (0, $(ROUNDROBIN))
+else
   CFLAGS += -DDEFAULT_ROUND_ROBIN=1
 endif
 
-ifneq (, $(PRETRIGGER))
-else ifneq (0, $(PRETRIGGER))
+ifeq (, $(PRETRIGGER))
+else ifeq (0, $(PRETRIGGER))
+else
   CFLAGS += -DDEFAULT_RX_PRETRIGGER=1
 endif
 
