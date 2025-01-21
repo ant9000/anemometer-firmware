@@ -77,7 +77,7 @@ typedef struct {
 } config_t;
 static config_t configuration;
 
-static uint8_t counter = 0;
+static uint8_t arity = 0;
 static void apply_configuration(void)
 {
     ch_group_t *grp_ptr = &soniclib_group;
@@ -91,7 +91,7 @@ static void apply_configuration(void)
             num_connected_sensors++;            // count one more connected
             active_devices |= (1 << dev_num);   // add to active device bit mask
             if (configuration.round_robin) {
-                configuration.soniclib[dev_num].mode = (counter % SONICLIB_NUMOF == dev_num ? CH_MODE_TRIGGERED_TX_RX : CH_MODE_TRIGGERED_RX_ONLY);
+                configuration.soniclib[dev_num].mode = (arity == dev_num ? CH_MODE_TRIGGERED_TX_RX : CH_MODE_TRIGGERED_RX_ONLY);
             }
             uint8_t res = ch_set_config(dev_ptr, &(configuration.soniclib[dev_num]));
             if (!res) {
@@ -102,7 +102,6 @@ static void apply_configuration(void)
         }
     }
     chdrv_pretrigger_delay_set(grp_ptr, configuration.rx_pretrigger ? configuration.rx_pretrigger_delay_us : 0);
-    counter++;
 }
 
 static void trigger_callback(void *arg) {
@@ -133,12 +132,14 @@ static void sensor_int_callback(ch_group_t *grp_ptr, uint8_t dev_num, ch_interru
 
 static void handle_data_ready(ch_group_t *grp_ptr) {
     uint8_t num_ports = ch_get_num_ports(grp_ptr);
-    memset(soniclib_data, 0, sizeof(soniclib_data));
+    if (arity == 0)
+        memset(soniclib_data, 0, sizeof(soniclib_data));
     for (uint8_t dev_num = 0; dev_num < num_ports; dev_num++) {
         ch_dev_t *dev_ptr = ch_get_dev_ptr(grp_ptr, dev_num);
         if (ch_sensor_is_connected(dev_ptr)) {
-            soniclib_data[dev_num].mode = ch_get_mode(dev_ptr);
-            if ((configuration.round_robin == 0) || (soniclib_data[dev_num].mode == CH_MODE_TRIGGERED_RX_ONLY)) {
+            ch_mode_t mode = ch_get_mode(dev_ptr);
+            if ((configuration.round_robin == 0) || (mode == CH_MODE_TRIGGERED_RX_ONLY)) {
+                soniclib_data[dev_num].mode = mode;
                 soniclib_data[dev_num].range = ch_get_range(dev_ptr, CH_RANGE_ECHO_ROUND_TRIP);
                 soniclib_data[dev_num].amplitude = ch_get_amplitude(dev_ptr);
                 soniclib_data[dev_num].num_samples = ch_get_num_samples(dev_ptr);
@@ -147,11 +148,13 @@ static void handle_data_ready(ch_group_t *grp_ptr) {
             }
         }
     }
-    for (uint8_t i = 0; i < HDC3020_NUMOF; i++) {
-        if (hdc3020_data[i].connected) {
-            if (hdc3020_fetch_on_demand_measurement(&hdc3020_devs[i], &hdc3020_data[i].temperature, &hdc3020_data[i].humidity) != HDC3020_OK) {
-                hdc3020_data[i].temperature = -999;
-                hdc3020_data[i].humidity = -999;
+    if (arity == 0) {
+        for (uint8_t i = 0; i < HDC3020_NUMOF; i++) {
+            if (hdc3020_data[i].connected) {
+                if (hdc3020_fetch_on_demand_measurement(&hdc3020_devs[i], &hdc3020_data[i].temperature, &hdc3020_data[i].humidity) != HDC3020_OK) {
+                    hdc3020_data[i].temperature = -999;
+                    hdc3020_data[i].humidity = -999;
+                }
             }
         }
     }
@@ -170,7 +173,7 @@ static void print_data(ch_group_t *grp_ptr) {
     }
     for (uint8_t dev_num = 0; dev_num < num_ports; dev_num++) {
         ch_dev_t *dev_ptr = ch_get_dev_ptr(grp_ptr, dev_num);
-        if (ch_sensor_is_connected(dev_ptr) && ((configuration.round_robin == 0) || (soniclib_data[dev_num].mode == CH_MODE_TRIGGERED_RX_ONLY))) {
+        if (ch_sensor_is_connected(dev_ptr)) {
             printf(
                 "%s{\"ch101\":%d,\"mode\":\"%s\",\"max_range_mm\":%d", (_printed? ",": ""), dev_num,
                 (soniclib_data[dev_num].mode == CH_MODE_TRIGGERED_TX_RX ? "TXRX" : "RX"), configuration.soniclib[dev_num].max_range
@@ -211,26 +214,38 @@ static int measure_cmd(int argc, char **argv) {
             hdc3020_trigger_on_demand_measurement(&hdc3020_devs[i], 0);
         }
     }
+    arity = 0;
+    apply_configuration();
+    taskflags = 0;
     ch_group_trigger(&soniclib_group);
     uint32_t counter = 0;
     while (counter < 1000) {
         if (taskflags & DATA_READY_FLAG) {
             handle_data_ready(grp_ptr); // fetch available data
-            if (configuration.round_robin)
-                apply_configuration();
-            taskflags = 0; // now we can start another measure
-            print_data(grp_ptr); // print data on console
-            break;
-        } else {
-            ztimer_sleep(ZTIMER_MSEC, 1);
-            counter++;
-        }
-    }
-    if (counter == 1000) {
-        printf("Timed out!\n");
-        return 1;
-    }
-    return 0;
+            if (configuration.round_robin) {
+                arity++;
+                if (arity < SONICLIB_NUMOF) {
+                    apply_configuration();
+                    taskflags &= ~DATA_READY_FLAG;
+                    ch_group_trigger(&soniclib_group);
+                } else {
+                    arity = 0;
+                }
+            }
+            if (!configuration.round_robin || arity == 0) {
+                print_data(grp_ptr); // print data on console
+                break;
+            }
+       } else {
+           ztimer_sleep(ZTIMER_MSEC, 1);
+           counter++;
+       }
+   }
+   if (counter == 1000) {
+       printf("Timed out!\n");
+       return 1;
+   }
+   return 0;
 }
 
 static int config_help (void) {
@@ -346,7 +361,6 @@ static int config_cmd(int argc, char **argv) {
         }
     } else if (strcmp(argv[1], "apply") == 0) {
         // config apply
-        counter = 0;
         apply_configuration();
         printf("Config applied.\n");
     } else if (strcmp(argv[1], "save") == 0) {
@@ -374,9 +388,9 @@ static int config_cmd(int argc, char **argv) {
 static char line_buf[SHELL_DEFAULT_BUFSIZE];
 static const shell_command_t shell_commands[] =
 {
-    { "measure", "trigger measure",   measure_cmd },
-    { "config",  "configure sensors", config_cmd  },
-    { NULL,      NULL,                NULL        },
+   { "measure", "trigger measure",   measure_cmd },
+   { "config",  "configure sensors", config_cmd  },
+   { NULL,      NULL,                NULL        },
 };
 
 int main(void) {
@@ -394,9 +408,9 @@ int main(void) {
     }
     config_show();
 
-	printf("\nTDK InvenSense\n");
-	printf("    Compile time:  %s %s\n", __DATE__, __TIME__);
-	printf("    SonicLib version: %u.%u.%u\n", SONICLIB_VER_MAJOR, SONICLIB_VER_MINOR, SONICLIB_VER_REV);
+    printf("\nTDK InvenSense\n");
+    printf("    Compile time:  %s %s\n", __DATE__, __TIME__);
+    printf("    SonicLib version: %u.%u.%u\n", SONICLIB_VER_MAJOR, SONICLIB_VER_MINOR, SONICLIB_VER_REV);
 
     res = ch_group_init(grp_ptr, SONICLIB_NUMOF, SONICLIB_NUMOF, SONICLIB_RTC_CAL_PULSE_MS);
     printf("ch_group_init: %d\n", res);
@@ -464,6 +478,7 @@ int main(void) {
     ch_io_int_callback_set(grp_ptr, sensor_int_callback);
 
     printf("Configuring sensor(s)...\n");
+    arity = 0;
     apply_configuration();
 
     printf("Initializing %d x HDC3020\n", HDC3020_NUMOF);
@@ -487,10 +502,21 @@ int main(void) {
         while (1) {
             if (taskflags & DATA_READY_FLAG) {
                 handle_data_ready(grp_ptr); // fetch available data
-                if (configuration.round_robin)
-                    apply_configuration();
-                taskflags = 0; // now we can start another measure
-                print_data(grp_ptr); // print data on console
+                if (configuration.round_robin) {
+                    arity++;
+                    if (arity < SONICLIB_NUMOF) {
+                        apply_configuration();
+                        taskflags &= ~DATA_READY_FLAG;
+                        ch_group_trigger(&soniclib_group);
+                    } else {
+                        arity = 0;
+                        apply_configuration();
+                    }
+                }
+                if (!configuration.round_robin || arity == 0) {
+                    taskflags = 0; // now we can start another measure
+                    print_data(grp_ptr); // print data on console
+                }
             } else {
                 ztimer_sleep(ZTIMER_MSEC, 1);
             }
