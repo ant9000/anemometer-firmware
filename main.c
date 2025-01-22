@@ -174,8 +174,9 @@ static void print_data(ch_group_t *grp_ptr) {
     for (uint8_t dev_num = 0; dev_num < num_ports; dev_num++) {
         ch_dev_t *dev_ptr = ch_get_dev_ptr(grp_ptr, dev_num);
         if (ch_sensor_is_connected(dev_ptr)) {
+            uint32_t freq = ch_get_frequency(dev_ptr);
             printf(
-                "%s{\"ch101\":%d,\"mode\":\"%s\",\"max_range_mm\":%d", (_printed? ",": ""), dev_num,
+                "%s{\"ch101\":%d,\"freq\":%ld,\"mode\":\"%s\",\"max_range_mm\":%d", (_printed? ",": ""), dev_num, freq,
                 (soniclib_data[dev_num].mode == CH_MODE_TRIGGERED_TX_RX ? "TXRX" : "RX"), configuration.soniclib[dev_num].max_range
             );
             _printed++;
@@ -462,6 +463,7 @@ int main(void) {
         group_freq /= num_connected_sensors;
 
     if (ch_group_set_frequency(grp_ptr, group_freq) == 0) {
+        printf("Firmware '%s' supports setting a group frequency.\n", configuration.firmware);
         printf("Group nominal frequency: %lu Hz\n", ch_group_get_frequency(grp_ptr));
         printf("After adjustment:\n");
         for (dev_num = 0; dev_num < num_ports; dev_num++) {
@@ -470,8 +472,6 @@ int main(void) {
                 printf("%d: %lu Hz\n", dev_num, ch_get_frequency(dev_ptr));
             }
         }
-    } else {
-        printf("Firmware '%s' does not support setting a group frequency.\n", configuration.firmware);
     }
 
     // Register callback function for measure ready interrupt
