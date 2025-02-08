@@ -400,6 +400,7 @@ int main(void) {
     uint8_t num_ports;
     uint8_t dev_num;
 
+    puts(FIRMWARE_METADATA);
     printf("\nLoading configuration...");
     if (load_from_nvm(&configuration, sizeof(configuration)) == 0) {
         printf(" found in flash.\n");

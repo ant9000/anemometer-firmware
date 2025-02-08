@@ -16,6 +16,9 @@ PRETRIGGER ?=
 PRETRIGGER_DELAY ?=
 ERASE ?=
 
+FIRMWARE_METADATA := \"Compiled at $(shell date +'%Y-%m-%d %H:%M:%S') - git commit $(shell git describe --always)\"
+CFLAGS += -DFIRMWARE_METADATA="$(FIRMWARE_METADATA)"
+
 USEMODULE += od
 USEMODULE += od_string
 USEMODULE += printf_float
@@ -24,6 +27,7 @@ USEMODULE += shell
 USEMODULE += shell_cmds_default
 USEMODULE += shell_extra_commands
 USEMODULE += periph_flashpage
+
 
 USEPKG += soniclib
 SONICLIB_FIRMWARE = NONE
