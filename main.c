@@ -39,7 +39,7 @@ static hdc3020_data_t hdc3020_data[HDC3020_NUMOF];
 #define DEFAULT_ROUND_ROBIN 0
 #endif
 #ifndef DEFAULT_FIRMWARE
-#define DEFAULT_FIRMWARE "sr"
+#define DEFAULT_FIRMWARE "narrow"
 #endif
 #ifndef DEFAULT_RX_PRETRIGGER
 #define DEFAULT_RX_PRETRIGGER 0
@@ -91,11 +91,11 @@ static void apply_configuration(void)
             num_connected_sensors++;            // count one more connected
             active_devices |= (1 << dev_num);   // add to active device bit mask
             if (configuration.round_robin) {
-                configuration.soniclib[dev_num].mode = (arity == dev_num ? CH_MODE_TRIGGERED_TX_RX : CH_MODE_TRIGGERED_RX_ONLY);
+                configuration.soniclib[dev_num].mode = ((arity%2) == dev_num ? CH_MODE_TRIGGERED_TX_RX : CH_MODE_TRIGGERED_RX_ONLY);
             }
             uint8_t res = ch_set_config(dev_ptr, &(configuration.soniclib[dev_num]));
             if (!res) {
-                ch_extra_display_config_info(dev_ptr);
+//                ch_extra_display_config_info(dev_ptr);
             } else {
                 printf("Device %d: Error during ch_set_config()\n", dev_num);
             }
@@ -108,12 +108,12 @@ static void trigger_callback(void *arg) {
     (void)arg;
     if (taskflags == 0) {
         taskflags |= MEASURE_PENDING;
+        ch_group_trigger(&soniclib_group);        
         for (uint8_t i = 0; i < HDC3020_NUMOF; i++) {
             if (hdc3020_data[i].connected) {
                 hdc3020_trigger_on_demand_measurement(&hdc3020_devs[i], 0);
             }
         }
-        ch_group_trigger(&soniclib_group);
     }
 }
 
@@ -138,23 +138,13 @@ static void handle_data_ready(ch_group_t *grp_ptr) {
         ch_dev_t *dev_ptr = ch_get_dev_ptr(grp_ptr, dev_num);
         if (ch_sensor_is_connected(dev_ptr)) {
             ch_mode_t mode = ch_get_mode(dev_ptr);
-            if ((configuration.round_robin == 0) || (mode == CH_MODE_TRIGGERED_RX_ONLY)) {
+            if ( (arity != 0) && ((configuration.round_robin == 0) || (mode == CH_MODE_TRIGGERED_RX_ONLY))) {
                 soniclib_data[dev_num].mode = mode;
                 soniclib_data[dev_num].range = ch_get_range(dev_ptr, CH_RANGE_ECHO_ROUND_TRIP);
                 soniclib_data[dev_num].amplitude = ch_get_amplitude(dev_ptr);
                 soniclib_data[dev_num].num_samples = ch_get_num_samples(dev_ptr);
                 int8_t res = ch_get_iq_data(dev_ptr, soniclib_data[dev_num].iq_data, 0, soniclib_data[dev_num].num_samples, CH_IO_MODE_BLOCK);
                 if (res != 0) { soniclib_data[dev_num].num_samples = 0; }
-            }
-        }
-    }
-    if (arity == 0) {
-        for (uint8_t i = 0; i < HDC3020_NUMOF; i++) {
-            if (hdc3020_data[i].connected) {
-                if (hdc3020_fetch_on_demand_measurement(&hdc3020_devs[i], &hdc3020_data[i].temperature, &hdc3020_data[i].humidity) != HDC3020_OK) {
-                    hdc3020_data[i].temperature = -999;
-                    hdc3020_data[i].humidity = -999;
-                }
             }
         }
     }
@@ -505,10 +495,20 @@ int main(void) {
                 handle_data_ready(grp_ptr); // fetch available data
                 if (configuration.round_robin) {
                     arity++;
-                    if (arity < SONICLIB_NUMOF) {
+                    if (arity <= SONICLIB_NUMOF) {
                         apply_configuration();
                         taskflags &= ~DATA_READY_FLAG;
                         ch_group_trigger(&soniclib_group);
+                        if (arity == SONICLIB_NUMOF) {
+							for (uint8_t i = 0; i < HDC3020_NUMOF; i++) {
+								if (hdc3020_data[i].connected) {
+									if (hdc3020_fetch_on_demand_measurement(&hdc3020_devs[i], &hdc3020_data[i].temperature, &hdc3020_data[i].humidity) != HDC3020_OK) {
+										hdc3020_data[i].temperature = -999;
+										hdc3020_data[i].humidity = -999;
+									}
+								}
+							}
+						}
                     } else {
                         arity = 0;
                         apply_configuration();
@@ -519,7 +519,7 @@ int main(void) {
                     print_data(grp_ptr); // print data on console
                 }
             } else {
-                ztimer_sleep(ZTIMER_MSEC, 1);
+                ztimer_sleep(ZTIMER_USEC, 1);
             }
         }
     }
