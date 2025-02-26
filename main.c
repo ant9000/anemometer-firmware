@@ -48,8 +48,9 @@ static hdc3020_data_t hdc3020_data[HDC3020_NUMOF];
 #define DEFAULT_RX_PRETRIGGER_DELAY_US CHDRV_PRETRIGGER_DELAY_US
 #endif
 
-#define MEASURE_PENDING     (1 << 0)
-#define DATA_READY_FLAG     (1 << 1)
+#define MEASURE_REQUESTED   (1 << 0)
+#define MEASURE_PENDING     (1 << 1)
+#define DATA_READY_FLAG     (1 << 2)
 
 volatile uint32_t taskflags = 0;
 
@@ -91,13 +92,11 @@ static void apply_configuration(void)
             num_connected_sensors++;            // count one more connected
             active_devices |= (1 << dev_num);   // add to active device bit mask
             if (configuration.round_robin) {
-                configuration.soniclib[dev_num].mode = ((arity%2) == dev_num ? CH_MODE_TRIGGERED_TX_RX : CH_MODE_TRIGGERED_RX_ONLY);
+                configuration.soniclib[dev_num].mode = (arity == dev_num ? CH_MODE_TRIGGERED_TX_RX : CH_MODE_TRIGGERED_RX_ONLY);
             }
             uint8_t res = ch_set_config(dev_ptr, &(configuration.soniclib[dev_num]));
-            if (!res) {
-//                ch_extra_display_config_info(dev_ptr);
-            } else {
-                printf("Device %d: Error during ch_set_config()\n", dev_num);
+            if (res) {
+                printf("Device %d: Error %d during ch_set_config()\n", dev_num, res);
             }
         }
     }
@@ -107,13 +106,7 @@ static void apply_configuration(void)
 static void trigger_callback(void *arg) {
     (void)arg;
     if (taskflags == 0) {
-        taskflags |= MEASURE_PENDING;
-        ch_group_trigger(&soniclib_group);        
-        for (uint8_t i = 0; i < HDC3020_NUMOF; i++) {
-            if (hdc3020_data[i].connected) {
-                hdc3020_trigger_on_demand_measurement(&hdc3020_devs[i], 0);
-            }
-        }
+        taskflags |= MEASURE_REQUESTED;
     }
 }
 
@@ -138,7 +131,7 @@ static void handle_data_ready(ch_group_t *grp_ptr) {
         ch_dev_t *dev_ptr = ch_get_dev_ptr(grp_ptr, dev_num);
         if (ch_sensor_is_connected(dev_ptr)) {
             ch_mode_t mode = ch_get_mode(dev_ptr);
-            if ( (arity != 0) && ((configuration.round_robin == 0) || (mode == CH_MODE_TRIGGERED_RX_ONLY))) {
+            if ((configuration.round_robin == 0) || (mode == CH_MODE_TRIGGERED_RX_ONLY)) {
                 soniclib_data[dev_num].mode = mode;
                 soniclib_data[dev_num].range = ch_get_range(dev_ptr, CH_RANGE_ECHO_ROUND_TRIP);
                 soniclib_data[dev_num].amplitude = ch_get_amplitude(dev_ptr);
@@ -153,7 +146,10 @@ static void handle_data_ready(ch_group_t *grp_ptr) {
 static void print_data(ch_group_t *grp_ptr) {
     uint8_t num_ports = ch_get_num_ports(grp_ptr);
     uint8_t _printed = 0;
-    printf("[{\"round-robin\":%d, \"firmware\":\"%s\",\"pretrigger\":%d}", configuration.round_robin, configuration.firmware, configuration.rx_pretrigger);
+    printf(
+        "[{\"round-robin\":%d,\"firmware\":\"%s\",\"pretrigger\":%d,\"pretrigger_us\":%d}",
+        configuration.round_robin, configuration.firmware, configuration.rx_pretrigger, configuration.rx_pretrigger_delay_us
+    );
     _printed++;
     for (uint8_t i = 0; i < HDC3020_NUMOF; i++) {
         if (hdc3020_data[i].connected) {
@@ -205,10 +201,15 @@ static int measure_cmd(int argc, char **argv) {
             hdc3020_trigger_on_demand_measurement(&hdc3020_devs[i], 0);
         }
     }
+    taskflags = MEASURE_PENDING;
     arity = 0;
     apply_configuration();
-    taskflags = 0;
     ch_group_trigger(&soniclib_group);
+    for (uint8_t i = 0; i < HDC3020_NUMOF; i++) {
+        if (hdc3020_data[i].connected) {
+            hdc3020_trigger_on_demand_measurement(&hdc3020_devs[i], 0);
+        }
+    }
     uint32_t counter = 0;
     while (counter < 1000) {
         if (taskflags & DATA_READY_FLAG) {
@@ -216,11 +217,19 @@ static int measure_cmd(int argc, char **argv) {
             if (configuration.round_robin) {
                 arity++;
                 if (arity < SONICLIB_NUMOF) {
-                    apply_configuration();
                     taskflags &= ~DATA_READY_FLAG;
+                    apply_configuration();
                     ch_group_trigger(&soniclib_group);
                 } else {
                     arity = 0;
+                    for (uint8_t i = 0; i < HDC3020_NUMOF; i++) {
+                        if (hdc3020_data[i].connected) {
+                            if (hdc3020_fetch_on_demand_measurement(&hdc3020_devs[i], &hdc3020_data[i].temperature, &hdc3020_data[i].humidity) != HDC3020_OK) {
+                                hdc3020_data[i].temperature = -999;
+                                hdc3020_data[i].humidity = -999;
+                            }
+                        }
+                    }
                 }
             }
             if (!configuration.round_robin || arity == 0) {
@@ -491,27 +500,34 @@ int main(void) {
         gpio_init_int(TRIGGER, GPIO_IN, GPIO_FALLING, trigger_callback, NULL);
         printf("Starting measures\n\n");
         while (1) {
-            if (taskflags & DATA_READY_FLAG) {
+            if (taskflags & MEASURE_REQUESTED) {
+                taskflags = MEASURE_PENDING;
+                arity = 0;
+                apply_configuration();
+                ch_group_trigger(&soniclib_group);
+                for (uint8_t i = 0; i < HDC3020_NUMOF; i++) {
+                    if (hdc3020_data[i].connected) {
+                        hdc3020_trigger_on_demand_measurement(&hdc3020_devs[i], 0);
+                    }
+                }
+            } else if (taskflags & DATA_READY_FLAG) {
                 handle_data_ready(grp_ptr); // fetch available data
                 if (configuration.round_robin) {
                     arity++;
-                    if (arity <= SONICLIB_NUMOF) {
+                    if (arity < SONICLIB_NUMOF) {
                         apply_configuration();
                         taskflags &= ~DATA_READY_FLAG;
                         ch_group_trigger(&soniclib_group);
-                        if (arity == SONICLIB_NUMOF) {
-							for (uint8_t i = 0; i < HDC3020_NUMOF; i++) {
-								if (hdc3020_data[i].connected) {
-									if (hdc3020_fetch_on_demand_measurement(&hdc3020_devs[i], &hdc3020_data[i].temperature, &hdc3020_data[i].humidity) != HDC3020_OK) {
-										hdc3020_data[i].temperature = -999;
-										hdc3020_data[i].humidity = -999;
-									}
-								}
-							}
-						}
                     } else {
                         arity = 0;
-                        apply_configuration();
+                        for (uint8_t i = 0; i < HDC3020_NUMOF; i++) {
+                            if (hdc3020_data[i].connected) {
+                                if (hdc3020_fetch_on_demand_measurement(&hdc3020_devs[i], &hdc3020_data[i].temperature, &hdc3020_data[i].humidity) != HDC3020_OK) {
+                                    hdc3020_data[i].temperature = -999;
+                                    hdc3020_data[i].humidity = -999;
+                                }
+                            }
+                        }
                     }
                 }
                 if (!configuration.round_robin || arity == 0) {
