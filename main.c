@@ -220,16 +220,18 @@ static int measure_cmd(int argc, char **argv) {
                     taskflags &= ~DATA_READY_FLAG;
                     apply_configuration();
                     ch_group_trigger(&soniclib_group);
-                } else {
-                    arity = 0;
-                    for (uint8_t i = 0; i < HDC3020_NUMOF; i++) {
-                        if (hdc3020_data[i].connected) {
-                            if (hdc3020_fetch_on_demand_measurement(&hdc3020_devs[i], &hdc3020_data[i].temperature, &hdc3020_data[i].humidity) != HDC3020_OK) {
-                                hdc3020_data[i].temperature = -999;
-                                hdc3020_data[i].humidity = -999;
+                    if (arity == SONICLIB_NUMOF -1) {
+                        for (uint8_t i = 0; i < HDC3020_NUMOF; i++) {
+                            if (hdc3020_data[i].connected) {
+                                if (hdc3020_fetch_on_demand_measurement(&hdc3020_devs[i], &hdc3020_data[i].temperature, &hdc3020_data[i].humidity) != HDC3020_OK) {
+                                    hdc3020_data[i].temperature = -999;
+                                    hdc3020_data[i].humidity = -999;
+                                }
                             }
                         }
                     }
+                } else {
+                    arity = 0;
                 }
             }
             if (!configuration.round_robin || arity == 0) {
@@ -518,16 +520,18 @@ int main(void) {
                         apply_configuration();
                         taskflags &= ~DATA_READY_FLAG;
                         ch_group_trigger(&soniclib_group);
-                    } else {
-                        arity = 0;
-                        for (uint8_t i = 0; i < HDC3020_NUMOF; i++) {
-                            if (hdc3020_data[i].connected) {
-                                if (hdc3020_fetch_on_demand_measurement(&hdc3020_devs[i], &hdc3020_data[i].temperature, &hdc3020_data[i].humidity) != HDC3020_OK) {
-                                    hdc3020_data[i].temperature = -999;
-                                    hdc3020_data[i].humidity = -999;
+                        if (arity == SONICLIB_NUMOF -1) {
+                            for (uint8_t i = 0; i < HDC3020_NUMOF; i++) {
+                                if (hdc3020_data[i].connected) {
+                                    if (hdc3020_fetch_on_demand_measurement(&hdc3020_devs[i], &hdc3020_data[i].temperature, &hdc3020_data[i].humidity) != HDC3020_OK) {
+                                        hdc3020_data[i].temperature = -999;
+                                        hdc3020_data[i].humidity = -999;
+                                    }
                                 }
                             }
                         }
+                    } else {
+                        arity = 0;
                     }
                 }
                 if (!configuration.round_robin || arity == 0) {
