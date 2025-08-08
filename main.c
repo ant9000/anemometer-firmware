@@ -12,8 +12,6 @@
 #include "hdc3020.h"
 #include "hdc3020_params.h"
 
-#define ROBPATCH 
-
 extern void auto_init_hdc3020(void);
 static hdc3020_t hdc3020_devs[HDC3020_NUMOF];
 typedef struct {
@@ -80,7 +78,40 @@ typedef struct {
 } config_t;
 static config_t configuration;
 
+typedef struct {
+    ch_mode_t   mode;
+    uint8_t     save;
+    uint16_t    delay;
+} round_robin_config_t;
 static uint8_t arity = 0;
+static round_robin_config_t round_robin_config[][SONICLIB_NUMOF] = {
+/* originale: instabile con gobba sulla prima lettura, con gobba
+    {{.mode=CH_MODE_TRIGGERED_TX_RX,   .save=0, .delay=0}, {.mode=CH_MODE_TRIGGERED_RX_ONLY, .save=1, .delay=0}},
+    {{.mode=CH_MODE_TRIGGERED_RX_ONLY, .save=1, .delay=0}, {.mode=CH_MODE_TRIGGERED_TX_RX,   .save=0, .delay=0}},
+*/
+/* doppia gobba
+    {{.mode=CH_MODE_TRIGGERED_RX_ONLY, .save=0, .delay=0}, {.mode=CH_MODE_TRIGGERED_RX_ONLY, .save=0, .delay=0}},
+    {{.mode=CH_MODE_TRIGGERED_TX_RX,   .save=0, .delay=0}, {.mode=CH_MODE_TRIGGERED_RX_ONLY, .save=1, .delay=0}},
+    {{.mode=CH_MODE_TRIGGERED_RX_ONLY, .save=0, .delay=0}, {.mode=CH_MODE_TRIGGERED_RX_ONLY, .save=0, .delay=0}},
+    {{.mode=CH_MODE_TRIGGERED_RX_ONLY, .save=1, .delay=0}, {.mode=CH_MODE_TRIGGERED_TX_RX,   .save=0, .delay=0}},
+*/
+/* finora il migliore: niente gobbe, stabile se il delay tra misure non è zero
+*/
+    {{.mode=CH_MODE_TRIGGERED_TX_RX,   .save=0, .delay=0}, {.mode=CH_MODE_TRIGGERED_TX_RX,   .save=0, .delay=0}},
+    {{.mode=CH_MODE_TRIGGERED_TX_RX,   .save=0, .delay=0}, {.mode=CH_MODE_TRIGGERED_RX_ONLY, .save=1, .delay=0}},
+    {{.mode=CH_MODE_TRIGGERED_TX_RX,   .save=0, .delay=0}, {.mode=CH_MODE_TRIGGERED_TX_RX,   .save=0, .delay=0}},
+    {{.mode=CH_MODE_TRIGGERED_RX_ONLY, .save=1, .delay=0}, {.mode=CH_MODE_TRIGGERED_TX_RX,   .save=0, .delay=0}},
+/* ottimale
+    {{.mode=CH_MODE_TRIGGERED_RX_ONLY, .save=0, .delay=0}, {.mode=CH_MODE_TRIGGERED_RX_ONLY, .save=0, .delay=0}},
+    {{.mode=CH_MODE_TRIGGERED_TX_RX,   .save=0, .delay=0}, {.mode=CH_MODE_TRIGGERED_TX_RX,   .save=0, .delay=0}},
+    {{.mode=CH_MODE_TRIGGERED_TX_RX,   .save=0, .delay=0}, {.mode=CH_MODE_TRIGGERED_RX_ONLY, .save=1, .delay=0}},
+    {{.mode=CH_MODE_TRIGGERED_TX_RX,   .save=0, .delay=0}, {.mode=CH_MODE_TRIGGERED_TX_RX,   .save=0, .delay=0}},
+    {{.mode=CH_MODE_TRIGGERED_RX_ONLY, .save=1, .delay=0}, {.mode=CH_MODE_TRIGGERED_TX_RX,   .save=0, .delay=0}},
+    {{.mode=CH_MODE_TRIGGERED_RX_ONLY, .save=0, .delay=0}, {.mode=CH_MODE_TRIGGERED_RX_ONLY, .save=0, .delay=0}},
+*/
+};
+#define ARITY_MAX  ARRAY_SIZE(round_robin_config)
+
 static void apply_configuration(void)
 {
     ch_group_t *grp_ptr = &soniclib_group;
@@ -94,13 +125,7 @@ static void apply_configuration(void)
             num_connected_sensors++;            // count one more connected
             active_devices |= (1 << dev_num);   // add to active device bit mask
             if (configuration.round_robin) {
-#ifdef ROBPATCH              
-                configuration.soniclib[dev_num].mode = ((arity%2) == dev_num ? CH_MODE_TRIGGERED_TX_RX : CH_MODE_TRIGGERED_RX_ONLY);  // ROB PATCH (arity%2 instead of arity==0 to skip first round)
-//                configuration.soniclib[dev_num].mode = ((arity%2) == dev_num ? CH_MODE_TRIGGERED_RX_ONLY : CH_MODE_TRIGGERED_TX_RX);  // ROB PATCH (arity%2 instead of arity==0 to skip first round)
-#else
-//                configuration.soniclib[dev_num].mode = ((arity==0) == dev_num ? CH_MODE_TRIGGERED_TX_RX : CH_MODE_TRIGGERED_RX_ONLY);  
-                configuration.soniclib[dev_num].mode = ((arity==0) == dev_num ? CH_MODE_TRIGGERED_RX_ONLY : CH_MODE_TRIGGERED_TX_RX);  
-#endif
+                configuration.soniclib[dev_num].mode = round_robin_config[arity][dev_num].mode;
             }
             uint8_t res = ch_set_config(dev_ptr, &(configuration.soniclib[dev_num]));
             if (res) {
@@ -139,17 +164,19 @@ static void handle_data_ready(ch_group_t *grp_ptr) {
         ch_dev_t *dev_ptr = ch_get_dev_ptr(grp_ptr, dev_num);
         if (ch_sensor_is_connected(dev_ptr)) {
             ch_mode_t mode = ch_get_mode(dev_ptr);
-#ifdef ROBPATCH              
-            if ( (arity!=0) && ((configuration.round_robin == 0) || (mode == CH_MODE_TRIGGERED_RX_ONLY))) {  // ROB PATCH (added arity!=0 to do another round)
-#else
-            if ( (configuration.round_robin == 0) || (mode == CH_MODE_TRIGGERED_RX_ONLY)) {  
-#endif
+            if ( (configuration.round_robin == 0) || round_robin_config[arity][dev_num].save) {
                 soniclib_data[dev_num].mode = mode;
                 soniclib_data[dev_num].range = ch_get_range(dev_ptr, CH_RANGE_ECHO_ROUND_TRIP);
                 soniclib_data[dev_num].amplitude = ch_get_amplitude(dev_ptr);
                 soniclib_data[dev_num].num_samples = ch_get_num_samples(dev_ptr);
                 int8_t res = ch_get_iq_data(dev_ptr, soniclib_data[dev_num].iq_data, 0, soniclib_data[dev_num].num_samples, CH_IO_MODE_BLOCK);
                 if (res != 0) { soniclib_data[dev_num].num_samples = 0; }
+            }
+            if (configuration.round_robin) {
+                uint16_t delay = round_robin_config[arity][dev_num].delay;
+                if (delay) {
+                    ztimer_sleep(ZTIMER_MSEC, delay);
+                }
             }
         }
     }
@@ -228,11 +255,11 @@ static int measure_cmd(int argc, char **argv) {
             handle_data_ready(grp_ptr); // fetch available data
             if (configuration.round_robin) {
                 arity++;
-                if (arity < SONICLIB_NUMOF) {
+                if (arity < ARITY_MAX) {
                     taskflags &= ~DATA_READY_FLAG;
                     apply_configuration();
                     ch_group_trigger(&soniclib_group);
-                    if (arity == SONICLIB_NUMOF -1) {
+                    if (arity == ARITY_MAX - 1) {
                         for (uint8_t i = 0; i < HDC3020_NUMOF; i++) {
                             if (hdc3020_data[i].connected) {
                                 if (hdc3020_fetch_on_demand_measurement(&hdc3020_devs[i], &hdc3020_data[i].temperature, &hdc3020_data[i].humidity) != HDC3020_OK) {
@@ -528,16 +555,12 @@ int main(void) {
                 handle_data_ready(grp_ptr); // fetch available data
                 if (configuration.round_robin) {
                     arity++;
-#ifdef ROBPATCH
-                    if (arity <= SONICLIB_NUMOF) {    // ROB PATCH  (ex "<")
-#else
-                    if (arity < SONICLIB_NUMOF) {    
-#endif                      
+                    if (arity < ARITY_MAX) {
                         apply_configuration();
                         taskflags &= ~DATA_READY_FLAG;
                         ch_group_trigger(&soniclib_group);
 
-                        if (arity == SONICLIB_NUMOF -1) {
+                        if (arity == ARITY_MAX-1) {
                             for (uint8_t i = 0; i < HDC3020_NUMOF; i++) {
                                 if (hdc3020_data[i].connected) {
                                     if (hdc3020_fetch_on_demand_measurement(&hdc3020_devs[i], &hdc3020_data[i].temperature, &hdc3020_data[i].humidity) != HDC3020_OK) {
