@@ -18,7 +18,7 @@ PRETRIGGER_DELAY ?= 0
 ERASE ?=
 
 FIRMWARE_METADATA := \"Compiled at $(shell date +'%Y-%m-%d %H:%M:%S') - git commit $(shell git describe --always)\"
-CFLAGS += -DFIRMWARE_METADATA="$(FIRMWARE_METADATA)"
+CFLAGS += -UFIRMWARE_METADATA -DFIRMWARE_METADATA="$(FIRMWARE_METADATA)"
 
 USEMODULE += od
 USEMODULE += od_string
