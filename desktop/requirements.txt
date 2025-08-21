@@ -1,0 +1,4 @@
+paho-mqtt
+scipy
+matplotlib
+pyqt5
