@@ -4,6 +4,7 @@ import os, sys, getopt, gpiod, serial, time, json, signal
 import paho.mqtt.client as mqtt
 from collections import OrderedDict
 from led import LED
+from measure import Measure
 
 NAME  = "anemometer"
 DEFAULTS = {"axes": "xyz", "baudrate": 576000, "delay": 0.0, "tdelay": 0.012}
@@ -129,6 +130,8 @@ def trigger_measure():
 leds["red"].off()
 leds["blue"].blink()
 counter = 0
+
+air_speed = Measure(axes=AXES, n_campioni=30, q_kalman=0.005)
 while True:
     try:
         #print(f"Measure {counter}...")
@@ -150,10 +153,15 @@ while True:
                                     print(f"[{axis}] {line}")
                         data[axis] = b""
         measures["timestamp_end"] = time.time()
-        msg = json.dumps(measures)
-        info = mqttClient.publish(topic=NAME, payload=msg.encode("utf-8"), qos=0)
-        info.wait_for_publish()
+        #msg = json.dumps(measures)
+        #info = mqttClient.publish(topic=NAME, payload=msg.encode("utf-8"), qos=0)
+        #info.wait_for_publish()
         #print(f" done.")
+        v_air = air_speed.compute(measures)
+        if v_air:
+            msg = json.dumps(v_air)
+            info = mqttClient.publish(topic=NAME, payload=msg.encode("utf-8"), qos=0)
+            info.wait_for_publish()
     except Exception as e:
         print(f"ERROR: {e}")
     time.sleep(DELAY)
