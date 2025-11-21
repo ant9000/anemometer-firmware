@@ -131,6 +131,24 @@ leds["red"].off()
 leds["blue"].blink()
 counter = 0
 
+class FloatEncoder(json.JSONEncoder):
+    def __init__(self, decimals=2, *args, **kwargs):
+        self.decimals = decimals
+        super().__init__(*args, **kwargs)
+    def _process_floats(self, obj):
+        if isinstance(obj, float):
+            D = 10**self.decimals
+            return int(obj*D)/D
+        elif isinstance(obj, dict):
+            return {k: self._process_floats(obj[k]) for k in obj}
+        elif isinstance(obj, list):
+            return [self._process_floats(v) for v in obj]
+        else:
+            return obj
+    def encode(self, obj):
+        obj = self._process_floats(obj)
+        return super().encode(obj)
+
 air_speed = Measure(axes=AXES, n_campioni=30, q_kalman=0.005)
 while True:
     try:
@@ -153,13 +171,12 @@ while True:
                                     print(f"[{axis}] {line}")
                         data[axis] = b""
         measures["timestamp_end"] = time.time()
-        #msg = json.dumps(measures)
-        #info = mqttClient.publish(topic=NAME, payload=msg.encode("utf-8"), qos=0)
-        #info.wait_for_publish()
-        #print(f" done.")
+        msg = json.dumps(measures, cls=FloatEncoder, decimals=4)
+        info = mqttClient.publish(topic=f"{NAME}/raw", payload=msg.encode("utf-8"), qos=0)
+        info.wait_for_publish()
         v_air = air_speed.compute(measures)
         if v_air:
-            msg = json.dumps(v_air)
+            msg = json.dumps(v_air, cls=FloatEncoder, decimals=4)
             info = mqttClient.publish(topic=NAME, payload=msg.encode("utf-8"), qos=0)
             info.wait_for_publish()
     except Exception as e:
