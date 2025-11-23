@@ -79,6 +79,10 @@ class Measure:
         # Inizializza la history per ampiezza e fase raw
         self.rho_history = {axis: {"0": [], "1": []} for axis in "xyz"}
         self.fase_history = {axis: {"0": [], "1": []} for axis in "xyz"}
+        # Flag di autocalibrazione per ogni asse
+        self.autocal_completa = {axis: False for axis in "xyz"}
+        self.autocal_misura = {axis: False for axis in "xyz"}
+
 
     def get_axes(self):
         return [axis for axis in "xyz" if self.axes_sel[axis]]
@@ -286,6 +290,8 @@ class Measure:
 
                         if self.Autocal[axis] == 1:
                             self.Autocal[axis] = 0
+                            self.autocal_misura[axis] = True
+                            self.autocal_completa[axis] = True
                             # min e max e prendere media DA AGGIUNGERE
                             phi00_mean = np.mean(self.phi0_history[axis]["0"][-10:])
                             phi11_mean = np.mean(self.phi1_history[axis]["1"][-10:])
@@ -305,6 +311,8 @@ class Measure:
                             # Valutare
                             delta_fase0 = 0
                             delta_fase1 = 0
+                        else:
+                            self.autocal_misura[axis] = False
 
                         if abs(delta_fase0) > np.pi:
                                 delta_fase0 = -1 * np.sign(delta_fase0) * (2 * np.pi - abs(delta_fase0))
@@ -352,6 +360,9 @@ class Measure:
             v_air['timestamp'] = measure["timestamp_end"]
             for i, axis in enumerate(self.get_axes()):
                 v_air[f'{axis}_kalman'] = v_air_filtered.get(axis, np.nan)
+                v_air[f"autocalibrazione_asse_{axis}"] = bool(self.autocal_completa[axis])
+                v_air[f"autocalibrazione_misura_{axis}"] = self.autocal_misura[axis]
+                v_air[f"temp_sonica_{axis}"] = temp_sonica[axis]
             #print(f'{v_air["timestamp"]:.4f} ', end="")
             #for i, axis in enumerate(self.get_axes()):
             #    print(f" {v_air_filtered.get(axis, np.nan):+6.4f}", end="")
