@@ -4,10 +4,10 @@ import os, sys, getopt, gpiod, serial, time, json, signal, queue, threading, mat
 import paho.mqtt.client as mqtt
 from collections import OrderedDict
 from led import LED
-from measure import Measure
 
 NAME  = "anemometer"
-DEFAULTS = {"axes": "xyz", "baudrate": 576000, "delay": 0.0, "tdelay": 0.012, "queue": 5}
+DEFAULTS = {"axes": "xyz", "baudrate": 576000, "delay": 0.0, "measures": "both", "queue": 5, "tdelay": 0.012}
+MEASTYPES = ["raw", "computed", "both"]
 PORTS = {"x": "/dev/ttyS1", "y": "/dev/ttyS2", "z": "/dev/ttyS3"}
 
 def usage():
@@ -18,6 +18,7 @@ def usage():
 -a AXES      only measure along AXES, a non empty substring of "xyz"; defaults to "{DEFAULTS["axes"]}"
 -b BAUDRATE  open serial ports at BAUDRATE; defaults to {DEFAULTS["baudrate"]}
 -d DELAY     DELAY between successive measures, in seconds; defaults to {DEFAULTS["delay"]}
+-m MEASTYPE  publish measures as MEASTYPE; default is {DEFAULTS["measures"]}, valid values {MEASTYPES}
 -q QUEUESIZE save up to QUEUESIZE measures into MQTT output queue before blocking
 -t TDELAY    TDELAY among axes measure triggers, in seconds; defaults to {DEFAULTS["tdelay"]}
 """
@@ -25,11 +26,12 @@ def usage():
 
 options = DEFAULTS.copy()
 try:
-    optlists, args = getopt.getopt(sys.argv[1:], 'a:b:d:t:q:')
+    optlists, args = getopt.getopt(sys.argv[1:], 'a:b:d:m:q:t:')
     optdict = dict(optlists)
     options["axes"] = "".join(OrderedDict.fromkeys(optdict.get("-a", DEFAULTS["axes"])))
     options["baudrate"] = optdict.get("-b", DEFAULTS["baudrate"])
     options["delay"] = optdict.get("-d", DEFAULTS["delay"])
+    options["measures"] = optdict.get("-m", DEFAULTS["measures"])
     options["queue"] = optdict.get("-q", DEFAULTS["queue"])
     options["tdelay"] = optdict.get("-t", DEFAULTS["tdelay"])
 
@@ -45,14 +47,16 @@ try:
         assert(options["delay"] >= 0)
     except Exception as err:
         raise getopt.GetoptError(f"{err}")
-    try:
-        options["tdelay"] = float(options["tdelay"])
-        assert(options["tdelay"] >= 0)
-    except Exception as err:
-        raise getopt.GetoptError(f"{err}")
+    if not options["measures"] in MEASTYPES:
+        raise getopt.GetoptError(f'\"{options["measures"]}\" is not in {MEASTYPES}')
     try:
         options["queue"] = int(options["queue"])
         assert(options["queue"] >= 0)
+    except Exception as err:
+        raise getopt.GetoptError(f"{err}")
+    try:
+        options["tdelay"] = float(options["tdelay"])
+        assert(options["tdelay"] >= 0)
     except Exception as err:
         raise getopt.GetoptError(f"{err}")
 
@@ -64,6 +68,7 @@ except getopt.GetoptError as err:
 AXES = options["axes"]
 BAUD = options["baudrate"]
 DELAY = options["delay"]
+MEAS  = options["measures"]
 QUEUE = options["queue"]
 TDELAY = options["tdelay"]
 print("Initializing LEDs...", flush=True, end="")
@@ -99,6 +104,29 @@ print("Connecting to local MQTT server...", flush=True, end="")
 mqttClient = mqtt.Client(NAME)
 mqttClient.connect("localhost", 1883)
 mqttClient.loop_start()
+print(" done.")
+
+print("Starting publishing task", flush=True, end="")
+data_queue = queue.Queue(QUEUE)
+def publishing_task():
+    global data_queue, MEAS
+    from measure import Measure
+    air_speed = Measure(axes=AXES, n_campioni=30, q_kalman=0.005)
+    while True:
+        measures = data_queue.get()
+        if MEAS in ["raw", "both"]:
+            msg = json.dumps(measures, cls=FloatEncoder, decimals=4)
+            info = mqttClient.publish(topic=f"{NAME}/raw", payload=msg.encode("utf-8"), qos=0)
+            info.wait_for_publish()
+        if MEAS in ["computed", "both"]:
+            v_air = air_speed.compute(measures)
+            if v_air:
+                msg = json.dumps(v_air, cls=FloatEncoder, decimals=4)
+                info = mqttClient.publish(topic=NAME, payload=msg.encode("utf-8"), qos=0)
+                info.wait_for_publish()
+
+task = threading.Thread(target=publishing_task, daemon=True)
+task.start()
 print(" done.")
 
 print(f"Initializing axes {AXES}", flush=True, end="")
@@ -156,25 +184,6 @@ class FloatEncoder(json.JSONEncoder):
     def encode(self, obj):
         obj = self._process_floats(obj)
         return super().encode(obj)
-
-data_queue = queue.Queue(QUEUE)
-
-def publishing_task():
-    global data_queue
-    air_speed = Measure(axes=AXES, n_campioni=30, q_kalman=0.005)
-    while True:
-        measures = data_queue.get()
-        msg = json.dumps(measures, cls=FloatEncoder, decimals=4)
-        info = mqttClient.publish(topic=f"{NAME}/raw", payload=msg.encode("utf-8"), qos=0)
-        info.wait_for_publish()
-        v_air = air_speed.compute(measures)
-        if v_air:
-            msg = json.dumps(v_air, cls=FloatEncoder, decimals=4)
-            info = mqttClient.publish(topic=NAME, payload=msg.encode("utf-8"), qos=0)
-            info.wait_for_publish()
-
-task = threading.Thread(target=publishing_task, daemon=True)
-task.start()
 
 while True:
     try:
