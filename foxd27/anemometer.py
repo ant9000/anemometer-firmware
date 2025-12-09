@@ -1,6 +1,6 @@
 #!/usr/bin/python3
 
-import os, sys, getopt, gpiod, serial, time, json, signal, queue, threading
+import os, sys, getopt, gpiod, serial, time, json, signal, queue, threading, math
 import paho.mqtt.client as mqtt
 from collections import OrderedDict
 from led import LED
@@ -144,7 +144,7 @@ class FloatEncoder(json.JSONEncoder):
         self.decimals = decimals
         super().__init__(*args, **kwargs)
     def _process_floats(self, obj):
-        if isinstance(obj, float):
+        if isinstance(obj, float) and not math.isnan(obj):
             D = 10**self.decimals
             return int(obj*D)/D
         elif isinstance(obj, dict):
