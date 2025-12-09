@@ -1,13 +1,13 @@
 #!/usr/bin/python3
 
-import os, sys, getopt, gpiod, serial, time, json, signal
+import os, sys, getopt, gpiod, serial, time, json, signal, queue, threading
 import paho.mqtt.client as mqtt
 from collections import OrderedDict
 from led import LED
 from measure import Measure
 
 NAME  = "anemometer"
-DEFAULTS = {"axes": "xyz", "baudrate": 576000, "delay": 0.0, "tdelay": 0.012}
+DEFAULTS = {"axes": "xyz", "baudrate": 576000, "delay": 0.0, "tdelay": 0.012, "queue": 5}
 PORTS = {"x": "/dev/ttyS1", "y": "/dev/ttyS2", "z": "/dev/ttyS3"}
 
 def usage():
@@ -18,17 +18,19 @@ def usage():
 -a AXES      only measure along AXES, a non empty substring of "xyz"; defaults to "{DEFAULTS["axes"]}"
 -b BAUDRATE  open serial ports at BAUDRATE; defaults to {DEFAULTS["baudrate"]}
 -d DELAY     DELAY between successive measures, in seconds; defaults to {DEFAULTS["delay"]}
+-q QUEUESIZE save up to QUEUESIZE measures into MQTT output queue before blocking
 -t TDELAY    TDELAY among axes measure triggers, in seconds; defaults to {DEFAULTS["tdelay"]}
 """
     print(usage)
 
 options = DEFAULTS.copy()
 try:
-    optlists, args = getopt.getopt(sys.argv[1:], 'a:b:d:t:')
+    optlists, args = getopt.getopt(sys.argv[1:], 'a:b:d:t:q:')
     optdict = dict(optlists)
     options["axes"] = "".join(OrderedDict.fromkeys(optdict.get("-a", DEFAULTS["axes"])))
     options["baudrate"] = optdict.get("-b", DEFAULTS["baudrate"])
     options["delay"] = optdict.get("-d", DEFAULTS["delay"])
+    options["queue"] = optdict.get("-q", DEFAULTS["queue"])
     options["tdelay"] = optdict.get("-t", DEFAULTS["tdelay"])
 
     if not options["axes"] or not (set(options["axes"]) <= set("xyz")):
@@ -48,6 +50,11 @@ try:
         assert(options["tdelay"] >= 0)
     except Exception as err:
         raise getopt.GetoptError(f"{err}")
+    try:
+        options["queue"] = int(options["queue"])
+        assert(options["queue"] >= 0)
+    except Exception as err:
+        raise getopt.GetoptError(f"{err}")
 
 except getopt.GetoptError as err:
     print(err)
@@ -57,6 +64,7 @@ except getopt.GetoptError as err:
 AXES = options["axes"]
 BAUD = options["baudrate"]
 DELAY = options["delay"]
+QUEUE = options["queue"]
 TDELAY = options["tdelay"]
 print("Initializing LEDs...", flush=True, end="")
 leds = {}
@@ -149,7 +157,25 @@ class FloatEncoder(json.JSONEncoder):
         obj = self._process_floats(obj)
         return super().encode(obj)
 
-air_speed = Measure(axes=AXES, n_campioni=30, q_kalman=0.005)
+data_queue = queue.Queue(QUEUE)
+
+def publishing_task():
+    global data_queue
+    air_speed = Measure(axes=AXES, n_campioni=30, q_kalman=0.005)
+    while True:
+        measures = data_queue.get()
+        msg = json.dumps(measures, cls=FloatEncoder, decimals=4)
+        info = mqttClient.publish(topic=f"{NAME}/raw", payload=msg.encode("utf-8"), qos=0)
+        info.wait_for_publish()
+        v_air = air_speed.compute(measures)
+        if v_air:
+            msg = json.dumps(v_air, cls=FloatEncoder, decimals=4)
+            info = mqttClient.publish(topic=NAME, payload=msg.encode("utf-8"), qos=0)
+            info.wait_for_publish()
+
+task = threading.Thread(target=publishing_task, daemon=True)
+task.start()
+
 while True:
     try:
         #print(f"Measure {counter}...")
@@ -171,14 +197,7 @@ while True:
                                     print(f"[{axis}] {line}")
                         data[axis] = b""
         measures["timestamp_end"] = time.time()
-        msg = json.dumps(measures, cls=FloatEncoder, decimals=4)
-        info = mqttClient.publish(topic=f"{NAME}/raw", payload=msg.encode("utf-8"), qos=0)
-        info.wait_for_publish()
-        v_air = air_speed.compute(measures)
-        if v_air:
-            msg = json.dumps(v_air, cls=FloatEncoder, decimals=4)
-            info = mqttClient.publish(topic=NAME, payload=msg.encode("utf-8"), qos=0)
-            info.wait_for_publish()
+        data_queue.put(measures)
     except Exception as e:
         print(f"ERROR: {e}")
     time.sleep(DELAY)
