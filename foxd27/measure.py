@@ -1,16 +1,7 @@
 from scipy import stats
 import numpy as np
 
-DIST = { # in micron
-    'x0': 102000, 'x1': 102000,
-    'y0': 102000, 'y1': 102000,
-    'z0': 102000, 'z1': 102000,
-}
-SAMPLE = { # in samples
-    'x0': 28, 'x1': 28,
-    'y0': 28, 'y1': 28,
-    'z0': 28, 'z1': 28,
-}
+from calibration import DIST, SAMPLE
 
 def polar(i, q):
     SAMPLES = 80
