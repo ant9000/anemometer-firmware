@@ -1,4 +1,3 @@
-from scipy import stats
 import numpy as np
 
 from calibration import DIST, SAMPLE
@@ -88,11 +87,13 @@ class Measure:
 
     def compute(self, measure):
         if self.CALIBRATION_COUNT < 30:
+            print(".", flush=True, end="")
             self.parse_measure_calibration(measure)
             self.CALIBRATION_COUNT += 1
             return
         if not len(self.CALIBRATION):
             self.compute_calibration()
+            print(" priming done.")
         return self.parse_measure(measure)
 
     def parse_measure_calibration(self, measure):
@@ -116,6 +117,11 @@ class Measure:
         # T0   - temperature avg
         # tof0 - base time of flight
         # f    - frequency
+        def mode(arr):
+            vals,counts = np.unique(arr, return_counts=True)
+            index = np.argmax(counts)
+            return vals[index]
+
         output = {}
         for axis in self.get_axes():
             for sensor in [0,1]:
@@ -125,7 +131,7 @@ class Measure:
                     self.axes_sel[axis] = False
                     continue
 
-                mode_val = stats.mode(peak, keepdims=True).mode[0]
+                mode_val = mode(peak)
 
                 if not np.isfinite(mode_val):
                     self.axes_sel[axis] = False
