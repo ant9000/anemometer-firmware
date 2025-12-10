@@ -63,7 +63,7 @@ class Measure:
         self.v_air_history = {axis: np.full(10, np.nan) for axis in "xyz"}
         self.deltaphi_history = {axis: {s: np.full(3, np.nan) for s in [0,1]} for axis in "xyz"}
         self.v_sound_history = {axis: np.full(3, np.nan) for axis in "xyz"}
-        self.v_air_filter = { axis: KalmanFilter() for axis in "xyz" }
+#       self.v_air_filter = { axis: KalmanFilter() for axis in "xyz" }
         self.v_sound_filter = { axis: KalmanFilter() for axis in "xyz" }
         self.phi0_history = {axis: np.full(10, np.nan) for axis in "xyz"}
         self.phi1_history = {axis: np.full(10, np.nan) for axis in "xyz"}
@@ -174,10 +174,10 @@ class Measure:
         v_air = {}
         v_sound = {}
         temp_sonica = {}
-        v_air_filtered = {}
+#       v_air_filtered = {}
         v_sound_filtered = {}
         v_air_out = {}
-        v_air_filtered_out = {}
+#       v_air_filtered_out = {}
         vmean_ax = {axis: np.nan for axis in self.get_axes()}
         scala_ax = {axis: 1.0 for axis in self.get_axes()}   # default = nessuna scala
 
@@ -186,7 +186,7 @@ class Measure:
         for axis in self.get_axes():
             v_air[axis] = np.nan
             v_sound[axis] = np.nan
-            v_air_filtered[axis] = np.nan
+#           v_air_filtered[axis] = np.nan
             v_sound_filtered[axis] = np.nan
             temp_sonica[axis] = np.nan
         for i, axis in enumerate(self.get_axes()):
@@ -457,11 +457,11 @@ class Measure:
             Q = self.q_kalman
 
             # Kalman sempre sulla velocità grezza
-            v_air_filtered[axis] = self.v_air_filter[axis].update(v_air[axis], Q)
+#           v_air_filtered[axis] = self.v_air_filter[axis].update(v_air[axis], Q)
             v_sound_filtered[axis] = self.v_sound_filter[axis].update(v_sound[axis], Q)
 
             # Kalman scalato e con OFFSET TOLTO
-            v_air_filtered_out[axis] = scala_ax[axis] * v_air_filtered[axis] - self.v_offset[axis]
+#           v_air_filtered_out[axis] = scala_ax[axis] * v_air_filtered[axis] - self.v_offset[axis]
 
             # Per la temperatura usiamo il valore di velocità uscente dal filtro di Kalman
             temp_sonica[axis]=v_sound_filtered[axis]*v_sound_filtered[axis]/(1.4*287)-273.15
@@ -496,7 +496,7 @@ class Measure:
         # RIAPPLICA LA SCALA ALLE VELOCITÀ
         # =========================
         for a in self.get_axes():
-            v_air_filtered_out[a] = scala_ax[a] * v_air_filtered[a] - self.v_offset[a]
+#           v_air_filtered_out[a] = scala_ax[a] * v_air_filtered[a] - self.v_offset[a]
             v_air_out[a] = scala_ax[a] * v_air[a] - self.v_offset[a]
 
         if len(v_air_out) == len(self.get_axes()):
@@ -504,7 +504,7 @@ class Measure:
 
             for axis in self.get_axes():
                 # --- KALMAN (già scalato e con offset tolto) ---
-                v_air_out[f"{axis}_kalman"] = v_air_filtered_out.get(axis, np.nan)
+#               v_air_out[f"{axis}_kalman"] = v_air_filtered_out.get(axis, np.nan)
 
                 # --- DIAGNOSTICA / AUTOCAL / TEMPERATURA ---
                 v_air_out[f"autocalibrazione_asse_{axis}"]   = bool(self.autocal_completa[axis])
