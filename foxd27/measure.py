@@ -61,17 +61,13 @@ class Measure:
                 self.CALIBRATION_INPUT[f"T_{axis}{sensor}"] = []
                 self.CALIBRATION_INPUT[f"f_{axis}{sensor}"] = np.nan
         self.v_air_history = {axis: np.full(10, np.nan) for axis in "xyz"}
-        self.deltaphi_last = {axis: {s: np.nan for s in [0,1]} for axis in "xyz"}
+        self.deltaphi_last = {axis: [np.nan for s in [0,1]] for axis in "xyz"}
 #       self.v_air_filter = { axis: KalmanFilter() for axis in "xyz" }
         self.v_sound_filter = { axis: KalmanFilter() for axis in "xyz" }
-        self.phi0_history = {axis: np.full(10, np.nan) for axis in "xyz"}
-        self.phi1_history = {axis: np.full(10, np.nan) for axis in "xyz"}
-        self.phi00_last = {axis: np.nan for axis in "xyz"}
-        self.phi11_last = {axis: np.nan for axis in "xyz"}
-        self.tof00_last = {axis: np.nan for axis in "xyz"}
-        self.tof11_last = {axis: np.nan for axis in "xyz"}
-        self.count0 = {axis: 0 for axis in "xyz"}
-        self.count1 = {axis: 0 for axis in "xyz"}
+        self.phi_history = {axis: [np.full(10, np.nan) for s in [0,1]] for axis in "xyz"}
+        self.phi_last = {axis: [np.nan for s in [0,1]] for axis in "xyz"}
+        self.tof_last = {axis: [np.nan for s in [0,1]] for axis in "xyz"}
+        self.count = {axis: [0, 0] for axis in "xyz"}
         self.Autocal = {axis: 0 for axis in "xyz"}
         self.rho_history = {axis: {s: np.full(self.n_campioni, np.nan) for s in [0,1]} for axis in "xyz"}
         # Flag di autocalibrazione per ogni asse
@@ -187,30 +183,22 @@ class Measure:
             v_sound_filtered[axis] = np.nan
             temp_sonica[axis] = np.nan
         for i, axis in enumerate(self.get_axes()):
-            g = 0
             s = 0
-            f0 = 0
-            f1 = 0
-            tof0_0 = 0
-            tof0_1 = 0
+            f = [0, 0]
+            tof0 = [0, 0]
+            T_now = []
+            delta_fase = [0, 0]
             for item in measure.get(axis, []):
                 if "hdc3020" in item:
                     sensor = item["hdc3020"]
-                    # Sensore 0
-                    if g == 0:
-                        g = g + 1
-                        dist0 = DIST[f"{axis}{sensor}"]
-                        T0_now = item["temp"]
-                        v_sound_cal = np.sqrt(1.4 * 287 * (T0_now + 273.15))
-                        tof0_0 = dist0 / v_sound_cal
-                    # Sensore 1
-                    else:
-                        dist1 = DIST[f"{axis}{sensor}"]
-                        T1_now = item["temp"]
-                        Tmean = (T1_now + T0_now)/2
-                        v_sound_cal = np.sqrt(1.4 * 287 * (Tmean+ 273.15))
-                        tof0_1 = dist1 / v_sound_cal
-                        tof0_0 = tof0_1
+                    dist = DIST[f"{axis}{sensor}"]
+                    T_now.append(item["temp"])
+                    Tmean = np.mean(T_now)
+                    v_sound_cal = np.sqrt(1.4 * 287 * (Tmean + 273.15))
+                    g = len(T_now) - 1
+                    tof0[g] = dist / v_sound_cal
+                    if g == 1:
+                        tof0[0] = tof0[1]
 
                 elif "ch101" in item:
                     sensor = item["ch101"]
@@ -225,9 +213,6 @@ class Measure:
                     if not np.isfinite(sample0_val):
                         continue
                     sample0 = int(sample0_val)
-                    tof0 = self.CALIBRATION[f"tof0_{axis}{sensor}"]
-                    phi0 = self.CALIBRATION[f"phi0_{axis}{sensor}"]
-                    f = self.CALIBRATION[f"f_{axis}{sensor}"]
                     amp_max = rho[sample0]
 
                     soglia_amp = 3000
@@ -246,142 +231,101 @@ class Measure:
                     rho_hist = self.rho_history[axis][sensor]
                     std_rho = np.std(rho_hist[np.isnan(rho_hist) == False])
 
-                    #Sensore 0: primo ciclo in cui si hanno i dati del sensore 0 inerenti alla misura attuale, vengono registrati
-                    if s == 0:
-                        fase = phi[sample0]
-                        #Unwrap fase
-                        if abs(fase - self.phi0_history[axis][-1]) >= np.pi:
-                            fase -= np.sign(fase)*2*np.pi
-                        # Registrazione fase solo iniziale
-                        if np.isnan(self.phi00_last[axis]):
-                            self.phi00_last[axis] = fase
-                        # Registrazione tof solo iniziale
-                        if np.isnan(self.tof00_last[axis]):
-                            self.tof00_last[axis] = tof0_0
-                        f0 = f
-                        s = s + 1
-                        if sample_measure==sample0 and f_amp==0:
-                            delta_fase0 = fase - self.phi00_last[axis]
-                            self.deltaphi_last[axis][sensor] = delta_fase0
-                            fixed_len_append(self.phi0_history[axis], fase)
+                    f[s] = self.CALIBRATION[f"f_{axis}{sensor}"]
+                    fase = phi[sample0]
+                    #Unwrap fase
+                    if abs(fase - self.phi_history[axis][s][-1]) >= np.pi:
+                        fase -= np.sign(fase)*2*np.pi
+                    # Registrazione fase solo iniziale
+                    if np.isnan(self.phi_last[axis][s]):
+                        self.phi_last[axis][s] = fase
+                    # Registrazione tof solo iniziale
+                    if np.isnan(self.tof_last[axis][s]):
+                        self.tof_last[axis][s] = tof0[s]
+                    if sample_measure==sample0 and f_amp==0:
+                        delta_fase[s] = fase - self.phi_last[axis][s]
+                        self.deltaphi_last[axis][sensor] = delta_fase[s]
+                        fixed_len_append(self.phi_history[axis][s], fase)
 
-                            if std_rho < self.std_threshold[axis]  and self.firstCal[axis] == True:
-                                self.count0[axis] +=1
+                        if std_rho < self.std_threshold[axis]  and self.firstCal[axis] == True:
+                            self.count[axis][s] +=1
 
-                                if self.count0[axis] == 30:
-                                    self.Autocal[axis] = 1
-                            else:
-                                    self.count0[axis] = 0
+                            if self.count[axis][s] == 30:
+                                self.Autocal[axis] = 1
                         else:
-                            delta_fase0 = self.deltaphi_last[axis][sensor]
-
-                    #Sensore 1: acquisizione dei dati sul sensore 1 relativi alla misura attuale
+                                self.count[axis][s] = 0
                     else:
-                        fase = phi[sample0]
-                        if abs(fase - self.phi1_history[axis][-1]) >= np.pi:
-                            fase -= np.sign(fase)*2*np.pi
+                        delta_fase[s] = self.deltaphi_last[axis][sensor]
 
-                        if np.isnan(self.phi11_last[axis]):
-                            self.phi11_last[axis] = fase
-
-                        if np.isnan(self.tof11_last[axis]):
-                            self.tof11_last[axis] = tof0_1
-
-                        f1 = f
-                        if sample_measure==sample0 and f_amp==0:
-                            delta_fase1 = fase - self.phi11_last[axis]
-                            self.deltaphi_last[axis][sensor] = delta_fase1
-                            fixed_len_append(self.phi1_history[axis], fase)
-
-                            if std_rho < self.std_threshold[axis]  and self.firstCal[axis] == True:
-                                self.count1[axis] +=1
-                                if self.count1[axis] == 30:
-                                    self.Autocal[axis] = 1
-                            else:
-                                    self.count1[axis] = 0
-                        else:
-                            delta_fase1 = self.deltaphi_last[axis][sensor]
-
+                    if s == 0:
+                        s = s + 1
+                    else:
                         if self.Autocal[axis] == 1 and self.firstCal[axis]==True:
                             self.Autocal[axis] = 0
                             self.firstCal[axis]=False
                             self.autocal_misura[axis] = True
                             self.autocal_completa[axis] = True
                             # min e max e prendere media DA AGGIUNGERE
-                            self.phi00_last[axis] = np.mean(self.phi0_history[axis])
-                            self.phi11_last[axis] = np.mean(self.phi1_history[axis])
+                            self.phi_last[axis][0] = np.mean(self.phi_history[axis][0])
+                            self.phi_last[axis][1] = np.mean(self.phi_history[axis][1])
 
-                            self.tof00_last[axis] = tof0_0
-                            self.tof11_last[axis] = tof0_1
-                            self.count0[axis] = 0
-                            self.count1[axis] = 0
+                            self.tof_last[axis][0] = tof0[0]
+                            self.tof_last[axis][1] = tof0[1]
+                            self.count[axis] = [0, 0]
 
                             # Valutare
-                            delta_fase0 = 0
-                            delta_fase1 = 0
+                            delta_fase = [0, 0]
                         else:
                             self.autocal_misura[axis] = False
 
-                        if abs(delta_fase0) > np.pi:
-                                delta_fase0 = -1 * np.sign(delta_fase0) * (2 * np.pi - abs(delta_fase0))
-                        if abs(delta_fase1) > np.pi:
-                                delta_fase1 = -1 * np.sign(delta_fase1) * (2 * np.pi - abs(delta_fase1))
+                        for i in [0,1]:
+                            if abs(delta_fase[i]) > np.pi:
+                                delta_fase[i] = - np.sign(delta_fase[i]) * (2 * np.pi - abs(delta_fase[i]))
 
                         # --- Controllo outlier su delta_fase0 / delta_fase1 ---
-                        abs0 = abs(delta_fase0)
-                        abs1 = abs(delta_fase1)
+                        delta_abs = np.abs(delta_fase)
 
                         # Soglie
                         OUTLIER_RATIO = 4.0     # quanto può essere più grande uno rispetto all'altro
                         MIN_DELTA     = 1e-3    # sotto questo valore consideriamo "rumore"
 
-                        if np.isfinite(abs0) and np.isfinite(abs1) and max(abs0, abs1) > MIN_DELTA:
-                            piccolo = min(abs0, abs1)
-                            grande  = max(abs0, abs1)
-
+                        if delta_abs[np.isfinite(delta_abs)].size and delta_abs.max() > MIN_DELTA:
+                            piccolo = delta_abs.min()
+                            grande  = delta_abs.max()
                             # Rapporto tra il più grande e il più piccolo
                             ratio = grande / (piccolo + 1e-12)   # evitiamo divisione per zero
-
                             if ratio > OUTLIER_RATIO:
-
                                 w_out = OUTLIER_RATIO / ratio
                                 w_out = np.clip(w_out, 0.0, 1.0)
-
                                 # nuova ampiezza "corretta": interpolo tra piccolo e grande
                                 # se w_out = 1  -> tengo grande
                                 # se w_out = 0  -> porto grande alla stessa ampiezza del piccolo
                                 nuova_amp = piccolo + w_out * (grande - piccolo)
-
                                 # applico solo al delta che è outlier (quello "grande")
-                                if abs0 > abs1:
-                                    delta_fase0 = np.sign(delta_fase0) * nuova_amp
+                                if delta_abs[0] > delta_abs[1]:
+                                    delta_fase[0] = np.sign(delta_fase[0]) * nuova_amp
                                 else:
-                                    delta_fase1 = np.sign(delta_fase1) * nuova_amp
-
+                                    delta_fase[1] = np.sign(delta_fase[1]) * nuova_amp
 
                         # # Filtro Mario
-                        if delta_fase0 * delta_fase1 > 0:  # concordi
-                            alpha = min(abs(delta_fase0), abs(delta_fase1))
-                            segno = 1 if delta_fase0 > 0 else -1
+                        if delta_fase[0] * delta_fase[1] > 0:  # concordi
+                            alpha = np.abs(delta_fase).min()
+                            segno = 1 if delta_fase[0] > 0 else -1
                             alpha *= segno
-                            delta_fase0 -= alpha
-                            delta_fase1 -= alpha
-                        elif delta_fase0 * delta_fase1 < 0:  # discordi
-                            delta_phi_avg = (delta_fase0 - delta_fase1) / 2
-                            delta_fase0 = delta_phi_avg
-                            delta_fase1 = -delta_phi_avg
+                            delta_fase[0] -= alpha
+                            delta_fase[1] -= alpha
+                        elif delta_fase[0] * delta_fase[1] < 0:  # discordi
+                            delta_phi_avg = (delta_fase[0] - delta_fase[1]) / 2
+                            delta_fase[0] = delta_phi_avg
+                            delta_fase[1] = -delta_phi_avg
 
-            tof00 = self.tof00_last[axis] - (1000000 * delta_fase0) / (2 * np.pi * f0)
-            self.TOF[f"{axis}0"] = tof00
+            for i in [0,1]:
+                self.TOF[f"{axis}{i}"] = self.tof_last[axis][i] - (1000000 * delta_fase[i]) / (2 * np.pi * f[i])
 
-            tof11 = self.tof11_last[axis] - (1000000 * delta_fase1) / (2 * np.pi * f1)
-            self.TOF[f"{axis}1"] = tof11
-
-            # Calcola la velocità del flusso d'aria se entrambi i TOF sono disponibili
-            if f"{axis}0" in self.TOF and f"{axis}1" in self.TOF:
-                dist = [self.CALIBRATION[f"dist0_{axis}{sensor}"] for sensor in [0,1]]
-                v_air[axis] = 0.5 * (dist[0] / self.TOF[f"{axis}0"] - dist[1] / self.TOF[f"{axis}1"])
-                v_sound[axis] = 0.5 * (dist[0] / self.TOF[f"{axis}0"] + dist[1] / self.TOF[f"{axis}1"])
+            # Calcola la velocità del flusso d'aria
+            dist = [self.CALIBRATION[f"dist0_{axis}{sensor}"] for sensor in [0,1]]
+            v_air[axis] = 0.5 * (dist[0] / self.TOF[f"{axis}0"] - dist[1] / self.TOF[f"{axis}1"])
+            v_sound[axis] = 0.5 * (dist[0] / self.TOF[f"{axis}0"] + dist[1] / self.TOF[f"{axis}1"])
 
             # Aggiorna lo storico dei valori precedenti
             fixed_len_append(self.v_air_history[axis], v_air[axis])
