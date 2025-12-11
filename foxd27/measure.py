@@ -372,9 +372,7 @@ class Measure:
             stats.collect(f"{axis} v_air/v_sound done")
 
             # --- MEDIA ROBUSTA ---
-            tmp = self.v_air_history[axis]
-            hist = tmp[np.isfinite(tmp)]
-            vmean = abs(np.mean(hist)) if len(hist) > 0 else 0.0
+            vmean = np.abs(np.nan_to_num(self.v_air_history[axis]).mean())
             vmean_ax[axis] = vmean
 
             # --- PARAMETRI ---
@@ -385,9 +383,7 @@ class Measure:
             v_ref_offset = 0.1       # soglia per il DC remover
 
             # --- STD MEDIA ---
-            std_mean = np.std(self.rho_history[axis], axis=1).mean()
-            if np.isnan(std_mean):
-                std_mean = np.inf
+            std_mean = np.nan_to_num(np.std(self.rho_history[axis], axis=1).mean(), nan=np.inf)
 
             # 1) Fattore da velocità (continuo e saturato)
             t = np.clip(vmean / v_ref, 0.0, 1.0)
