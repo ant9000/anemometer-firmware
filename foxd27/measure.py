@@ -1,6 +1,36 @@
 import numpy as np
+import time
 
 from calibration import DIST, SAMPLE
+
+PROFILE = False
+if PROFILE:
+    class Stats:
+        cols = []
+        def __init__(self):
+            self.times = []
+        def collect(self, msg):
+            self.times.append((msg, time.perf_counter(), time.process_time()))
+        def print(self):
+            t00, t01 = self.times[0][1:]
+            cols = ["TIME"]
+            realtime = ["REAL"]
+            proctime = ["PROC"]
+            for msg, t0, t1 in self.times:
+                cols.append(msg)
+                realtime.append(str(int((t0 - t00) * 1000000)))
+                proctime.append(str(int((t1 - t01) * 1000000)))
+            if not Stats.cols:
+                Stats.cols = cols
+                print(";".join(cols))
+            print(";".join(realtime))
+            print(";".join(proctime))
+else:
+    class Stats:
+        def collect(self, msg):
+            pass
+        def print(self):
+            pass
 
 def polar(i, q):
     SAMPLES = 80
@@ -164,6 +194,8 @@ class Measure:
         if not len(self.CALIBRATION):
             # calibration output not yet available, skip
             return
+        stats = Stats()
+        stats.collect("start")
         v_air = {}
         v_sound = {}
         temp_sonica = {}
@@ -174,7 +206,6 @@ class Measure:
         vmean_ax = {axis: np.nan for axis in self.get_axes()}
         scala_ax = {axis: 1.0 for axis in self.get_axes()}   # default = nessuna scala
 
-
         # INIZIALIZZA TUTTE LE CHIAVI PER OGNI ASSE!
         for axis in self.get_axes():
             v_air[axis] = np.nan
@@ -182,12 +213,15 @@ class Measure:
 #           v_air_filtered[axis] = np.nan
             v_sound_filtered[axis] = np.nan
             temp_sonica[axis] = np.nan
+
+        stats.collect("init done")
+
         for i, axis in enumerate(self.get_axes()):
             s = 0
-            f = [0, 0]
-            tof0 = [0, 0]
+            f = np.array([0., 0.])
+            tof0 = np.array([0., 0.])
             T_now = []
-            delta_fase = [0, 0]
+            delta_fase = np.array([0., 0.])
             for item in measure.get(axis, []):
                 if "hdc3020" in item:
                     sensor = item["hdc3020"]
@@ -199,6 +233,7 @@ class Measure:
                     tof0[g] = dist / v_sound_cal
                     if g == 1:
                         tof0[0] = tof0[1]
+                    stats.collect(f"{axis} hdc3020.{g} done")
 
                 elif "ch101" in item:
                     sensor = item["ch101"]
@@ -257,8 +292,10 @@ class Measure:
                     else:
                         delta_fase[s] = self.deltaphi_last[axis][sensor]
 
+                    stats.collect(f"{axis} ch101.{s} done")
+
                     if s == 0:
-                        s = s + 1
+                        s = 1
                     else:
                         if self.Autocal[axis] == 1 and self.firstCal[axis]==True:
                             self.Autocal[axis] = 0
@@ -277,6 +314,8 @@ class Measure:
                             delta_fase = [0, 0]
                         else:
                             self.autocal_misura[axis] = False
+
+                        stats.collect(f"{axis} autocal check done")
 
                         for i in [0,1]:
                             if abs(delta_fase[i]) > np.pi:
@@ -302,22 +341,18 @@ class Measure:
                                 # se w_out = 0  -> porto grande alla stessa ampiezza del piccolo
                                 nuova_amp = piccolo + w_out * (grande - piccolo)
                                 # applico solo al delta che è outlier (quello "grande")
-                                if delta_abs[0] > delta_abs[1]:
-                                    delta_fase[0] = np.sign(delta_fase[0]) * nuova_amp
-                                else:
-                                    delta_fase[1] = np.sign(delta_fase[1]) * nuova_amp
+                                i = 0 if delta_abs[0] > delta_abs[1] else 1
+                                delta_fase[i] = np.sign(delta_fase[i]) * nuova_amp
 
                         # # Filtro Mario
                         if delta_fase[0] * delta_fase[1] > 0:  # concordi
-                            alpha = np.abs(delta_fase).min()
-                            segno = 1 if delta_fase[0] > 0 else -1
-                            alpha *= segno
-                            delta_fase[0] -= alpha
-                            delta_fase[1] -= alpha
+                            alpha = np.abs(delta_fase).min() * np.sign(delta_fase[0])
+                            delta_fase -= [alpha, alpha]
                         elif delta_fase[0] * delta_fase[1] < 0:  # discordi
                             delta_phi_avg = (delta_fase[0] - delta_fase[1]) / 2
-                            delta_fase[0] = delta_phi_avg
-                            delta_fase[1] = -delta_phi_avg
+                            delta_fase = np.array([delta_phi_avg, -delta_phi_avg])
+
+                        stats.collect(f"{axis} delta fase filtering done")
 
             for i in [0,1]:
                 self.TOF[f"{axis}{i}"] = self.tof_last[axis][i] - (1000000 * delta_fase[i]) / (2 * np.pi * f[i])
@@ -329,6 +364,8 @@ class Measure:
 
             # Aggiorna lo storico dei valori precedenti
             fixed_len_append(self.v_air_history[axis], v_air[axis])
+
+            stats.collect(f"{axis} v_air/v_sound done")
 
             tmp = self.rho_history[axis][0]
             rho_hist0 = tmp[np.isfinite(tmp)]
@@ -387,6 +424,8 @@ class Measure:
                 # --- DC removal DISATTIVO (alta velocità) ---
                 v_air_out[axis] = v_air_scaled
 
+            stats.collect(f"{axis} rescaling for v_air_out done")
+
             #   KALMAN
             Q = self.q_kalman
 
@@ -400,9 +439,11 @@ class Measure:
             # Per la temperatura usiamo il valore di velocità uscente dal filtro di Kalman
             temp_sonica[axis]=v_sound_filtered[axis]*v_sound_filtered[axis]/(1.4*287)-273.15
 
-            # =========================
-            # SCALA SELETTIVA PER ASSE
-            # =========================
+            stats.collect(f"{axis} kalman for temp_sonica done")
+
+        # =========================
+        # SCALA SELETTIVA PER ASSE
+        # =========================
 
         assi_sotto = [
             a for a in self.get_axes()
@@ -433,6 +474,8 @@ class Measure:
 #           v_air_filtered_out[a] = scala_ax[a] * v_air_filtered[a] - self.v_offset[a]
             v_air_out[a] = scala_ax[a] * v_air[a] - self.v_offset[a]
 
+        stats.collect("per axis rescaling done")
+
         if len(v_air_out) == len(self.get_axes()):
             v_air_out['timestamp'] = measure["timestamp_end"]
 
@@ -455,5 +498,8 @@ class Measure:
                 v_air_out[f"{axis}_vout"] = v_air_out[axis]
                 # chiave "semplice" usata da new_qt come RAW
                 v_air_out[axis] = v_air[axis]
+
+            stats.collect("end")
+            stats.print()
 
             return v_air_out
