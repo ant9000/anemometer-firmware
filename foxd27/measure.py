@@ -94,15 +94,15 @@ class Measure:
                 self.CALIBRATION_INPUT[f"T_{axis}{sensor}"] = []
                 self.CALIBRATION_INPUT[f"f_{axis}{sensor}"] = np.nan
         self.v_air_history = {axis: np.full(10, np.nan) for axis in "xyz"}
-        self.deltaphi_last = {axis: [np.nan for s in [0,1]] for axis in "xyz"}
+        self.deltaphi_last = {axis: np.full(2, np.nan) for axis in "xyz"}
 #       self.v_air_filter = { axis: KalmanFilter() for axis in "xyz" }
         self.v_sound_filter = { axis: KalmanFilter() for axis in "xyz" }
-        self.phi_history = {axis: [np.full(10, np.nan) for s in [0,1]] for axis in "xyz"}
-        self.phi_last = {axis: [np.nan for s in [0,1]] for axis in "xyz"}
-        self.tof_last = {axis: [np.nan for s in [0,1]] for axis in "xyz"}
-        self.count = {axis: [0, 0] for axis in "xyz"}
+        self.phi_history = {axis: np.full((2,10), np.nan) for axis in "xyz"}
+        self.phi_last = {axis: np.full(2, np.nan) for axis in "xyz"}
+        self.tof_last = {axis: np.full(2, np.nan) for axis in "xyz"}
+        self.count = {axis: np.full(2, 0) for axis in "xyz"}
         self.Autocal = {axis: 0 for axis in "xyz"}
-        self.rho_history = {axis: {s: np.full(self.n_campioni, np.nan) for s in [0,1]} for axis in "xyz"}
+        self.rho_history = {axis: np.full((2, self.n_campioni), np.nan) for axis in "xyz"}
         # Flag di autocalibrazione per ogni asse
         self.autocal_completa = {axis: False for axis in "xyz"}
         self.autocal_misura = {axis: False for axis in "xyz"}
