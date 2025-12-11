@@ -199,6 +199,7 @@ class Measure:
             return
         stats = Stats()
         stats.collect("start")
+        axes = self.get_axes()
         v_air = {}
         v_sound = {}
         temp_sonica = {}
@@ -206,20 +207,22 @@ class Measure:
         v_sound_filtered = {}
         v_air_out = {}
 #       v_air_filtered_out = {}
-        vmean_ax = {axis: np.nan for axis in self.get_axes()}
-        scala_ax = {axis: 1.0 for axis in self.get_axes()}   # default = nessuna scala
+        vmean_ax = {}
+        scala_ax = {}
 
         # INIZIALIZZA TUTTE LE CHIAVI PER OGNI ASSE!
-        for axis in self.get_axes():
+        for axis in axes:
             v_air[axis] = np.nan
             v_sound[axis] = np.nan
 #           v_air_filtered[axis] = np.nan
             v_sound_filtered[axis] = np.nan
             temp_sonica[axis] = np.nan
+            vmean_ax[axis] = np.nan
+            scala_ax[axis] = 1.0   # default = nessuna scala
 
         stats.collect("init done")
 
-        for i, axis in enumerate(self.get_axes()):
+        for i, axis in enumerate(axes):
             s = 0
             f = np.array([0., 0.])
             tof0 = np.array([0., 0.])
@@ -321,9 +324,9 @@ class Measure:
 
             stats.collect(f"{axis} autocal check done")
 
-            for i in [0,1]:
-                if abs(delta_fase[i]) > np.pi:
-                    delta_fase[i] = - np.sign(delta_fase[i]) * (2 * np.pi - abs(delta_fase[i]))
+            for s in [0,1]:
+                if abs(delta_fase[s]) > np.pi:
+                    delta_fase[s] = - np.sign(delta_fase[s]) * (2 * np.pi - abs(delta_fase[s]))
 
             # --- Controllo outlier su delta_fase0 / delta_fase1 ---
             delta_abs = np.abs(delta_fase)
@@ -345,8 +348,8 @@ class Measure:
                     # se w_out = 0  -> porto grande alla stessa ampiezza del piccolo
                     nuova_amp = piccolo + w_out * (grande - piccolo)
                     # applico solo al delta che è outlier (quello "grande")
-                    i = 0 if delta_abs[0] > delta_abs[1] else 1
-                    delta_fase[i] = np.sign(delta_fase[i]) * nuova_amp
+                    s = 0 if delta_abs[0] > delta_abs[1] else 1
+                    delta_fase[s] = np.sign(delta_fase[s]) * nuova_amp
 
             # # Filtro Mario
             if delta_fase[0] * delta_fase[1] > 0:  # concordi
@@ -358,8 +361,8 @@ class Measure:
 
             stats.collect(f"{axis} delta fase filtering done")
 
-            for i in [0,1]:
-                self.TOF[f"{axis}{i}"] = self.tof_last[axis][i] - (1000000 * delta_fase[i]) / (2 * np.pi * f[i])
+            for s in [0,1]:
+                self.TOF[f"{axis}{s}"] = self.tof_last[axis][s] - (1000000 * delta_fase[s]) / (2 * np.pi * f[s])
 
             # Calcola la velocità del flusso d'aria
             dist = [self.CALIBRATION[f"dist0_{axis}{sensor}"] for sensor in [0,1]]
@@ -439,23 +442,13 @@ class Measure:
         # SCALA SELETTIVA PER ASSE
         # =========================
 
-        assi_sotto = [
-            a for a in self.get_axes()
-            if vmean_ax[a] <= v_ref_offset
-        ]
+        assi_sotto = [a for a in axes if vmean_ax[a] <= v_ref_offset]
+        assi_sopra = [a for a in axes if vmean_ax[a] > v_ref_offset]
 
-        assi_sopra = [
-            a for a in self.get_axes()
-            if vmean_ax[a] > v_ref_offset
-        ]
-
-        # CASO 1: tutti sotto → tengo la scala continua già calcolata
-        if len(assi_sotto) == len(self.get_axes()):
+        if len(assi_sotto) == len(axes): # CASO 1: tutti sotto → tengo la scala continua già calcolata
             pass
-
-        # CASO 2: almeno uno sopra → scala selettiva
-        else:
-            for a in self.get_axes():
+        else:                            # CASO 2: almeno uno sopra → scala selettiva
+            for a in axes:
                 if a in assi_sopra:
                     scala_ax[a] = 1.15
                 else:
@@ -464,16 +457,16 @@ class Measure:
         # =========================
         # RIAPPLICA LA SCALA ALLE VELOCITÀ
         # =========================
-        for a in self.get_axes():
+        for a in axes:
 #           v_air_filtered_out[a] = scala_ax[a] * v_air_filtered[a] - self.v_offset[a]
             v_air_out[a] = scala_ax[a] * v_air[a] - self.v_offset[a]
 
         stats.collect("per axis rescaling done")
 
-        if len(v_air_out) == len(self.get_axes()):
+        if len(v_air_out) == len(axes):
             v_air_out['timestamp'] = measure["timestamp_end"]
 
-            for axis in self.get_axes():
+            for axis in axes:
                 # --- KALMAN (già scalato e con offset tolto) ---
 #               v_air_out[f"{axis}_kalman"] = v_air_filtered_out.get(axis, np.nan)
 
