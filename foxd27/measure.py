@@ -245,6 +245,8 @@ class Measure:
                     if len(finite_idx) == 0:
                         continue
 
+                    stats.collect(f"{axis} ch101.{s} data collection done")
+
                     sample_measure = int(finite_idx[np.argmax(rho[finite_idx])]) - 2
 
                     sample0_val = self.CALIBRATION.get(f"sample0_{axis}{sensor}", np.nan)
@@ -266,8 +268,7 @@ class Measure:
 
                     fixed_len_append(self.rho_history[axis][sensor], amp_max)
 
-                    rho_hist = self.rho_history[axis][sensor]
-                    std_rho = np.std(rho_hist[np.isnan(rho_hist) == False])
+                    stats.collect(f"{axis} ch101.{s} amp_max filtering done")
 
                     f[s] = self.CALIBRATION[f"f_{axis}{sensor}"]
                     fase = phi[sample0]
@@ -285,6 +286,8 @@ class Measure:
                         self.deltaphi_last[axis][sensor] = delta_fase[s]
                         fixed_len_append(self.phi_history[axis][s], fase)
 
+                        tmp = self.rho_history[axis][sensor]
+                        std_rho = np.std(tmp[np.isfinite(tmp)])
                         if std_rho < self.std_threshold[axis]  and self.firstCal[axis] == True:
                             self.count[axis][s] +=1
 
@@ -296,66 +299,64 @@ class Measure:
                         delta_fase[s] = self.deltaphi_last[axis][sensor]
 
                     stats.collect(f"{axis} ch101.{s} done")
+                    s += 1
 
-                    if s == 0:
-                        s = 1
-                    else:
-                        if self.Autocal[axis] == 1 and self.firstCal[axis]==True:
-                            self.Autocal[axis] = 0
-                            self.firstCal[axis]=False
-                            self.autocal_misura[axis] = True
-                            self.autocal_completa[axis] = True
-                            # min e max e prendere media DA AGGIUNGERE
-                            self.phi_last[axis][0] = np.mean(self.phi_history[axis][0])
-                            self.phi_last[axis][1] = np.mean(self.phi_history[axis][1])
+            if self.Autocal[axis] == 1 and self.firstCal[axis]==True:
+                self.Autocal[axis] = 0
+                self.firstCal[axis]=False
+                self.autocal_misura[axis] = True
+                self.autocal_completa[axis] = True
+                # min e max e prendere media DA AGGIUNGERE
+                self.phi_last[axis][0] = np.mean(self.phi_history[axis][0])
+                self.phi_last[axis][1] = np.mean(self.phi_history[axis][1])
 
-                            self.tof_last[axis][0] = tof0[0]
-                            self.tof_last[axis][1] = tof0[1]
-                            self.count[axis] = [0, 0]
+                self.tof_last[axis][0] = tof0[0]
+                self.tof_last[axis][1] = tof0[1]
+                self.count[axis] = [0, 0]
 
-                            # Valutare
-                            delta_fase = [0, 0]
-                        else:
-                            self.autocal_misura[axis] = False
+                # Valutare
+                delta_fase = [0, 0]
+            else:
+                self.autocal_misura[axis] = False
 
-                        stats.collect(f"{axis} autocal check done")
+            stats.collect(f"{axis} autocal check done")
 
-                        for i in [0,1]:
-                            if abs(delta_fase[i]) > np.pi:
-                                delta_fase[i] = - np.sign(delta_fase[i]) * (2 * np.pi - abs(delta_fase[i]))
+            for i in [0,1]:
+                if abs(delta_fase[i]) > np.pi:
+                    delta_fase[i] = - np.sign(delta_fase[i]) * (2 * np.pi - abs(delta_fase[i]))
 
-                        # --- Controllo outlier su delta_fase0 / delta_fase1 ---
-                        delta_abs = np.abs(delta_fase)
+            # --- Controllo outlier su delta_fase0 / delta_fase1 ---
+            delta_abs = np.abs(delta_fase)
 
-                        # Soglie
-                        OUTLIER_RATIO = 4.0     # quanto può essere più grande uno rispetto all'altro
-                        MIN_DELTA     = 1e-3    # sotto questo valore consideriamo "rumore"
+            # Soglie
+            OUTLIER_RATIO = 4.0     # quanto può essere più grande uno rispetto all'altro
+            MIN_DELTA     = 1e-3    # sotto questo valore consideriamo "rumore"
 
-                        if delta_abs[np.isfinite(delta_abs)].size and delta_abs.max() > MIN_DELTA:
-                            piccolo = delta_abs.min()
-                            grande  = delta_abs.max()
-                            # Rapporto tra il più grande e il più piccolo
-                            ratio = grande / (piccolo + 1e-12)   # evitiamo divisione per zero
-                            if ratio > OUTLIER_RATIO:
-                                w_out = OUTLIER_RATIO / ratio
-                                w_out = np.clip(w_out, 0.0, 1.0)
-                                # nuova ampiezza "corretta": interpolo tra piccolo e grande
-                                # se w_out = 1  -> tengo grande
-                                # se w_out = 0  -> porto grande alla stessa ampiezza del piccolo
-                                nuova_amp = piccolo + w_out * (grande - piccolo)
-                                # applico solo al delta che è outlier (quello "grande")
-                                i = 0 if delta_abs[0] > delta_abs[1] else 1
-                                delta_fase[i] = np.sign(delta_fase[i]) * nuova_amp
+            if delta_abs[np.isfinite(delta_abs)].size and delta_abs.max() > MIN_DELTA:
+                piccolo = delta_abs.min()
+                grande  = delta_abs.max()
+                # Rapporto tra il più grande e il più piccolo
+                ratio = grande / (piccolo + 1e-12)   # evitiamo divisione per zero
+                if ratio > OUTLIER_RATIO:
+                    w_out = OUTLIER_RATIO / ratio
+                    w_out = np.clip(w_out, 0.0, 1.0)
+                    # nuova ampiezza "corretta": interpolo tra piccolo e grande
+                    # se w_out = 1  -> tengo grande
+                    # se w_out = 0  -> porto grande alla stessa ampiezza del piccolo
+                    nuova_amp = piccolo + w_out * (grande - piccolo)
+                    # applico solo al delta che è outlier (quello "grande")
+                    i = 0 if delta_abs[0] > delta_abs[1] else 1
+                    delta_fase[i] = np.sign(delta_fase[i]) * nuova_amp
 
-                        # # Filtro Mario
-                        if delta_fase[0] * delta_fase[1] > 0:  # concordi
-                            alpha = np.abs(delta_fase).min() * np.sign(delta_fase[0])
-                            delta_fase -= [alpha, alpha]
-                        elif delta_fase[0] * delta_fase[1] < 0:  # discordi
-                            delta_phi_avg = (delta_fase[0] - delta_fase[1]) / 2
-                            delta_fase = np.array([delta_phi_avg, -delta_phi_avg])
+            # # Filtro Mario
+            if delta_fase[0] * delta_fase[1] > 0:  # concordi
+                alpha = np.abs(delta_fase).min() * np.sign(delta_fase[0])
+                delta_fase -= [alpha, alpha]
+            elif delta_fase[0] * delta_fase[1] < 0:  # discordi
+                delta_phi_avg = (delta_fase[0] - delta_fase[1]) / 2
+                delta_fase = np.array([delta_phi_avg, -delta_phi_avg])
 
-                        stats.collect(f"{axis} delta fase filtering done")
+            stats.collect(f"{axis} delta fase filtering done")
 
             for i in [0,1]:
                 self.TOF[f"{axis}{i}"] = self.tof_last[axis][i] - (1000000 * delta_fase[i]) / (2 * np.pi * f[i])
