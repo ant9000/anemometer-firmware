@@ -12,3 +12,4 @@ THRESHOLDS = {
     "rho": {"x": 60, "y": 60, "z": 60},
     "scale": {"x": 150, "y": 150, "z": 150},
 }
+PROFILE = False

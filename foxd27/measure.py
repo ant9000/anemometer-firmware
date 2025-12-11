@@ -1,9 +1,8 @@
 import numpy as np
 import time
 
-from calibration import DIST, SAMPLE, THRESHOLDS
+from calibration import DIST, SAMPLE, THRESHOLDS, PROFILE
 
-PROFILE = False
 if PROFILE:
     class Stats:
         cols = []
@@ -18,13 +17,17 @@ if PROFILE:
             proctime = ["PROC"]
             for msg, t0, t1 in self.times:
                 cols.append(msg)
-                realtime.append(str(int((t0 - t00) * 1000000)))
-                proctime.append(str(int((t1 - t01) * 1000000)))
+                realtime.append(int((t0 - t00) * 1000000))
+                proctime.append(int((t1 - t01) * 1000000))
             if not Stats.cols:
                 Stats.cols = cols
                 print(";".join(cols))
-            print(";".join(realtime))
-            print(";".join(proctime))
+            print(";".join(map(str, realtime)))
+            print(";".join(map(str, proctime)))
+            realtime = ["REAL inc", 0] + list(np.diff(realtime[1:]))
+            proctime = ["PROC inc", 0] + list(np.diff(proctime[1:]))
+            print(";".join(map(str, realtime)))
+            print(";".join(map(str, proctime)))
 else:
     class Stats:
         def collect(self, msg):
