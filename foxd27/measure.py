@@ -1,7 +1,7 @@
 import numpy as np
 import time
 
-from calibration import DIST, SAMPLE
+from calibration import DIST, SAMPLE, THRESHOLDS
 
 PROFILE = False
 if PROFILE:
@@ -73,8 +73,8 @@ class Measure:
         self.clear()
         #
         self.q_kalman = q_kalman
-        self.std_threshold = {"x": 60, "y": 60, "z": 60}
-        self.std_soglia = {"x": 150, "y": 150, "z": 150}
+        self.std_threshold = THRESHOLDS["rho"]
+        self.std_soglia = THRESHOLDS["scale"]
         self.v_offset = {axis: 0.0 for axis in "xyz"}
         self.alpha_dc = 0.01
 
