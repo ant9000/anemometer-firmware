@@ -78,14 +78,13 @@ class Measure:
         self.q_kalman = q_kalman
         self.std_threshold = THRESHOLDS["rho"]
         self.std_soglia = THRESHOLDS["scale"]
-        self.v_offset = {axis: 0.0 for axis in "xyz"}
+        self.v_offset = np.full(len("xyz"), 0.0)
         self.alpha_dc = 0.01
 
     def clear(self):
         self.CALIBRATION = {}
         self.CALIBRATION_INPUT = {}
         self.CALIBRATION_COUNT = 0
-        self.TOF = {}
         for axis in self.get_axes():
             for sensor in [0,1]:
                 self.CALIBRATION_INPUT[f"dist_{axis}{sensor}"] = []
@@ -119,7 +118,7 @@ class Measure:
             return
         if not len(self.CALIBRATION):
             self.compute_calibration()
-            print(" priming done.")
+            print(" priming done.", flush=True)
         return self.parse_measure(measure)
 
     def parse_measure_calibration(self, measure):
@@ -148,8 +147,10 @@ class Measure:
             index = np.argmax(counts)
             return vals[index]
 
-        output = {}
-        for axis in self.get_axes():
+        axes = self.get_axes()
+        N = len(axes)
+        output = {k: np.full((N, 2), np.nan) for k in ["dist0", "sample0", "phi0", "T0", "tof0", "f"]}
+        for iaxis, axis in enumerate(axes):
             for sensor in [0,1]:
                 dist0 = DIST[f"{axis}{sensor}"]
                 peak = self.CALIBRATION_INPUT[f"peak_{axis}{sensor}"]
@@ -185,46 +186,34 @@ class Measure:
                 except ZeroDivisionError:
                     self.axes_sel[axis] = False
                     continue
-                output[f"dist0_{axis}{sensor}"] = dist0
-                output[f"sample0_{axis}{sensor}"] = sample0
-                output[f"phi0_{axis}{sensor}"] = phi0
-                output[f"T0_{axis}{sensor}"] = T0
-                output[f"tof0_{axis}{sensor}"] = tof0
-                output[f"f_{axis}{sensor}"] = f
+                output["dist0"][iaxis,sensor] = dist0
+                output["sample0"][iaxis,sensor] = sample0
+                output["phi0"][iaxis,sensor] = phi0
+                output["T0"][iaxis,sensor] = T0
+                output["tof0"][iaxis,sensor] = tof0
+                output["f"][iaxis,sensor] = f
         self.CALIBRATION = output
 
     def parse_measure(self, measure):
         if not len(self.CALIBRATION):
             # calibration output not yet available, skip
             return
+
         stats = Stats()
         stats.collect("start")
         axes = self.get_axes()
-        v_air = {}
-        v_sound = {}
-        temp_sonica = {}
-#       v_air_filtered = {}
-        v_sound_filtered = {}
-        v_air_out = {}
-#       v_air_filtered_out = {}
-        vmean_ax = {}
-        scala_ax = {}
-
-        # INIZIALIZZA TUTTE LE CHIAVI PER OGNI ASSE!
-        for axis in axes:
-            v_air[axis] = np.nan
-            v_sound[axis] = np.nan
-#           v_air_filtered[axis] = np.nan
-            v_sound_filtered[axis] = np.nan
-            temp_sonica[axis] = np.nan
-            vmean_ax[axis] = np.nan
-            scala_ax[axis] = 1.0   # default = nessuna scala
+        N = len(axes)
+        v_air = np.full(N, np.nan)
+        v_sound = np.full(N, np.nan)
+        temp_sonica = np.full(N, np.nan)
+        vmean_ax = np.full(N, np.nan)
+        scala_ax = np.full(N, 1.0) # default = nessuna scala
+        v_air_out = np.full(N, np.nan)
 
         stats.collect("init done")
 
-        for i, axis in enumerate(axes):
+        for iaxis, axis in enumerate(axes):
             s = 0
-            f = np.array([0., 0.])
             tof0 = np.array([0., 0.])
             T_now = []
             delta_fase = np.array([0., 0.])
@@ -252,7 +241,7 @@ class Measure:
 
                     sample_measure = int(finite_idx[np.argmax(rho[finite_idx])]) - 2
 
-                    sample0_val = self.CALIBRATION.get(f"sample0_{axis}{sensor}", np.nan)
+                    sample0_val = self.CALIBRATION["sample0"][iaxis,sensor]
                     if not np.isfinite(sample0_val):
                         continue
                     sample0 = int(sample0_val)
@@ -273,7 +262,6 @@ class Measure:
 
                     stats.collect(f"{axis} ch101.{s} amp_max filtering done")
 
-                    f[s] = self.CALIBRATION[f"f_{axis}{sensor}"]
                     fase = phi[sample0]
                     #Unwrap fase
                     if abs(fase - self.phi_history[axis][s][-1]) >= np.pi:
@@ -310,15 +298,13 @@ class Measure:
                 self.autocal_misura[axis] = True
                 self.autocal_completa[axis] = True
                 # min e max e prendere media DA AGGIUNGERE
-                self.phi_last[axis][0] = np.mean(self.phi_history[axis][0])
-                self.phi_last[axis][1] = np.mean(self.phi_history[axis][1])
+                self.phi_last[axis] = self.phi_history[axis].mean(axis=1)
 
-                self.tof_last[axis][0] = tof0[0]
-                self.tof_last[axis][1] = tof0[1]
+                self.tof_last[axis] = tof0
                 self.count[axis] = [0, 0]
 
                 # Valutare
-                delta_fase = [0, 0]
+                delta_fase = np.array([0., 0.])
             else:
                 self.autocal_misura[axis] = False
 
@@ -361,22 +347,21 @@ class Measure:
 
             stats.collect(f"{axis} delta fase filtering done")
 
-            for s in [0,1]:
-                self.TOF[f"{axis}{s}"] = self.tof_last[axis][s] - (1000000 * delta_fase[s]) / (2 * np.pi * f[s])
-
             # Calcola la velocità del flusso d'aria
-            dist = [self.CALIBRATION[f"dist0_{axis}{sensor}"] for sensor in [0,1]]
-            v_air[axis] = 0.5 * (dist[0] / self.TOF[f"{axis}0"] - dist[1] / self.TOF[f"{axis}1"])
-            v_sound[axis] = 0.5 * (dist[0] / self.TOF[f"{axis}0"] + dist[1] / self.TOF[f"{axis}1"])
+            tof = self.tof_last[axis] - (1000000 * delta_fase) / (2 * np.pi * self.CALIBRATION["f"][iaxis])
+            dist = self.CALIBRATION["dist0"][iaxis]
+            q = dist / tof
+            v_air[iaxis]   = 0.5 * (q[0] - q[1])
+            v_sound[iaxis] = 0.5 * (q[0] + q[1])
 
             # Aggiorna lo storico dei valori precedenti
-            fixed_len_append(self.v_air_history[axis], v_air[axis])
+            fixed_len_append(self.v_air_history[axis], v_air[iaxis])
 
             stats.collect(f"{axis} v_air/v_sound done")
 
             # --- MEDIA ROBUSTA ---
             vmean = np.abs(np.nan_to_num(self.v_air_history[axis]).mean())
-            vmean_ax[axis] = vmean
+            vmean_ax[iaxis] = vmean
 
             # --- PARAMETRI ---
             scala_min = 0.35
@@ -403,90 +388,73 @@ class Measure:
 
             # 3) Scala finale complessiva (CONTINUA)
             scala = scala_vel * (1.0 + w_std * (g_std - 1.0))
-            scala_ax[axis] = scala
+            scala_ax[iaxis] = scala
             #   SCALA PURA
-            v_air_scaled = scala * v_air[axis]
+            v_air_scaled = scala * v_air[iaxis]
 
             # =========================
             vmean_abs = abs(vmean)
             if vmean_abs <= v_ref_offset:
-                if not np.isfinite(self.v_offset[axis]):
-                    self.v_offset[axis] = 0.0
+                if not np.isfinite(self.v_offset[iaxis]):
+                    self.v_offset[iaxis] = 0.0
 
                 # --- DC removal ATTIVO (bassa velocità) ---
-                self.v_offset[axis] = ((1.0 - self.alpha_dc) * self.v_offset[axis] + self.alpha_dc * v_air_scaled)
-                v_air_out[axis] = v_air_scaled - self.v_offset[axis]
+                self.v_offset[iaxis] = ((1.0 - self.alpha_dc) * self.v_offset[iaxis] + self.alpha_dc * v_air_scaled)
+                v_air_out[iaxis] = v_air_scaled - self.v_offset[iaxis]
 
             else:
                 # --- DC removal DISATTIVO (alta velocità) ---
-                v_air_out[axis] = v_air_scaled
+                v_air_out[iaxis] = v_air_scaled
 
             stats.collect(f"{axis} rescaling for v_air_out done")
 
             #   KALMAN
             Q = self.q_kalman
 
-            # Kalman sempre sulla velocità grezza
-#           v_air_filtered[axis] = self.v_air_filter[axis].update(v_air[axis], Q)
-            v_sound_filtered[axis] = self.v_sound_filter[axis].update(v_sound[axis], Q)
-
-            # Kalman scalato e con OFFSET TOLTO
-#           v_air_filtered_out[axis] = scala_ax[axis] * v_air_filtered[axis] - self.v_offset[axis]
-
             # Per la temperatura usiamo il valore di velocità uscente dal filtro di Kalman
-            temp_sonica[axis]=v_sound_filtered[axis]*v_sound_filtered[axis]/(1.4*287)-273.15
+            v_sound_filtered = self.v_sound_filter[axis].update(v_sound[iaxis], Q)
+            temp_sonica[iaxis]=v_sound_filtered**2/(1.4*287)-273.15
 
             stats.collect(f"{axis} kalman for temp_sonica done")
 
         # =========================
         # SCALA SELETTIVA PER ASSE
         # =========================
-
-        assi_sotto = [a for a in axes if vmean_ax[a] <= v_ref_offset]
-        assi_sopra = [a for a in axes if vmean_ax[a] > v_ref_offset]
-
-        if len(assi_sotto) == len(axes): # CASO 1: tutti sotto → tengo la scala continua già calcolata
+        if len(vmean_ax[vmean_ax <= v_ref_offset]) == N:
+            # CASO 1: tutti sotto → tengo la scala continua già calcolata
             pass
-        else:                            # CASO 2: almeno uno sopra → scala selettiva
-            for a in axes:
-                if a in assi_sopra:
-                    scala_ax[a] = 1.15
-                else:
-                    scala_ax[a] = 1.0
+        else:
+            # CASO 2: almeno uno sopra → scala selettiva
+            vmean_ax[vmean_ax > v_ref_offset] = 1.15
+            vmean_ax[vmean_ax <= v_ref_offset] = 1.0
 
         # =========================
         # RIAPPLICA LA SCALA ALLE VELOCITÀ
         # =========================
-        for a in axes:
-#           v_air_filtered_out[a] = scala_ax[a] * v_air_filtered[a] - self.v_offset[a]
-            v_air_out[a] = scala_ax[a] * v_air[a] - self.v_offset[a]
+        v_air_out = scala_ax * v_air - self.v_offset
 
         stats.collect("per axis rescaling done")
 
-        if len(v_air_out) == len(axes):
-            v_air_out['timestamp'] = measure["timestamp_end"]
+        output = {'timestamp': measure["timestamp_end"]}
+        for iaxis, axis in enumerate(axes):
+            output[axis] = v_air_out[iaxis]
+            # --- DIAGNOSTICA / AUTOCAL / TEMPERATURA ---
+            output[f"autocalibrazione_asse_{axis}"]   = bool(self.autocal_completa[axis])
+            output[f"autocalibrazione_misura_{axis}"] = self.autocal_misura[axis]
+            output[f"temp_sonica_{axis}"]             = temp_sonica[iaxis]
 
-            for axis in axes:
-                # --- KALMAN (già scalato e con offset tolto) ---
-#               v_air_out[f"{axis}_kalman"] = v_air_filtered_out.get(axis, np.nan)
+            output[f"{axis}_v_mean"] = vmean_ax[iaxis]
+            output[f"{axis}_scala"]  = scala_ax[iaxis]
 
-                # --- DIAGNOSTICA / AUTOCAL / TEMPERATURA ---
-                v_air_out[f"autocalibrazione_asse_{axis}"]   = bool(self.autocal_completa[axis])
-                v_air_out[f"autocalibrazione_misura_{axis}"] = self.autocal_misura[axis]
-                v_air_out[f"temp_sonica_{axis}"]             = temp_sonica[axis]
+            # --- VELOCITÀ ---
+            # v_air grezza
+            output[f"{axis}_vair"] = v_air[iaxis]
+            # v_air_out filtrata (scala + DC remover)
+            output[f"{axis}_vout"] = v_air_out[iaxis]
+            # chiave "semplice" usata da new_qt come RAW
+            output[axis] = v_air[iaxis]
 
-                v_air_out[f"{axis}_v_mean"] = vmean_ax[axis]
-                v_air_out[f"{axis}_scala"]  = scala_ax[axis]
+        stats.collect("end")
+        stats.print()
 
-                # --- VELOCITÀ ---
-                # v_air grezza
-                v_air_out[f"{axis}_vair"] = v_air[axis]
-                # v_air_out filtrata (scala + DC remover)
-                v_air_out[f"{axis}_vout"] = v_air_out[axis]
-                # chiave "semplice" usata da new_qt come RAW
-                v_air_out[axis] = v_air[axis]
-
-            stats.collect("end")
-            stats.print()
-
-            return v_air_out
+        return output
