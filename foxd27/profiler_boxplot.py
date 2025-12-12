@@ -12,8 +12,18 @@ fname = sys.argv[1]
 try:
     csvfile = open(fname, newline='')
 except Exception as e:
-    print("ERROR: can't open '{fname}' ({e}")
+    print("ERROR: can't open '{fname}' ({e})")
     sys.exit(1)
+
+# consume irrelevant lines
+while True:
+    line = csvfile.readline()
+    if not line:
+        print(f"ERROR: Cannot find start line in '{fname}'")
+        sys.exit(1)
+    if line.startswith("TIME;"):
+        break
+csvfile.seek(csvfile.tell()-len(line), 0)
 
 reader = csv.reader(csvfile, delimiter=";")
 fieldnames = [s.replace(" done", "") for s in next(reader)[2:]]
