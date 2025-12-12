@@ -77,7 +77,7 @@ class Measure:
         #
         self.q_kalman = q_kalman
         self.std_threshold = THRESHOLDS["rho"]
-        self.std_soglia = THRESHOLDS["scale"]
+        self.std_soglia = np.array([THRESHOLDS["scale"][axis] for axis in "xyz"])
         self.v_offset = np.full(len("xyz"), 0.0)
         self.alpha_dc = 0.01
 
@@ -92,8 +92,8 @@ class Measure:
                 self.CALIBRATION_INPUT[f"phi_{axis}{sensor}"] = []
                 self.CALIBRATION_INPUT[f"T_{axis}{sensor}"] = []
                 self.CALIBRATION_INPUT[f"f_{axis}{sensor}"] = np.nan
-        self.v_air_history = {axis: np.full(10, np.nan) for axis in "xyz"}
-        self.deltaphi_last = {axis: np.full(2, np.nan) for axis in "xyz"}
+        self.v_air_history = np.full((3, 10), np.nan)
+        self.deltaphi_last = np.full((3,2), np.nan)
 #       self.v_air_filter = { axis: KalmanFilter() for axis in "xyz" }
         self.v_sound_filter = { axis: KalmanFilter() for axis in "xyz" }
         self.phi_history = {axis: np.full((2,10), np.nan) for axis in "xyz"}
@@ -101,7 +101,7 @@ class Measure:
         self.tof_last = {axis: np.full(2, np.nan) for axis in "xyz"}
         self.count = {axis: np.full(2, 0) for axis in "xyz"}
         self.Autocal = {axis: 0 for axis in "xyz"}
-        self.rho_history = {axis: np.full((2, self.n_campioni), np.nan) for axis in "xyz"}
+        self.rho_history = np.full((3, 2, self.n_campioni), np.nan)
         # Flag di autocalibrazione per ogni asse
         self.autocal_completa = {axis: False for axis in "xyz"}
         self.autocal_misura = {axis: False for axis in "xyz"}
@@ -248,17 +248,17 @@ class Measure:
                     amp_max = rho[sample0]
 
                     soglia_amp = 3000
-                    tmp = self.rho_history[axis][sensor]
+                    tmp = self.rho_history[iaxis,sensor]
                     amp_hist = tmp[np.isfinite(tmp)]
                     mean_amp = np.mean(amp_hist) if len(amp_hist) else amp_max
 
                     # print(f"Mean amplitude for axis {axis}, sensor {sensor}: {mean_amp}", "amp_max:",amp_max)
                     f_amp = 0
                     if (amp_max < (mean_amp - soglia_amp)) or (amp_max > (mean_amp + soglia_amp)):
-                        amp_max =  self.rho_history[axis][sensor][-1]
+                        amp_max =  self.rho_history[iaxis,sensor,-1]
                         f_amp = 1
 
-                    fixed_len_append(self.rho_history[axis][sensor], amp_max)
+                    fixed_len_append(self.rho_history[iaxis,sensor], amp_max)
 
                     stats.collect(f"{axis} ch101.{s} amp_max filtering done")
 
@@ -274,10 +274,10 @@ class Measure:
                         self.tof_last[axis][s] = tof0[s]
                     if sample_measure==sample0 and f_amp==0:
                         delta_fase[s] = fase - self.phi_last[axis][s]
-                        self.deltaphi_last[axis][sensor] = delta_fase[s]
+                        self.deltaphi_last[iaxis,sensor] = delta_fase[s]
                         fixed_len_append(self.phi_history[axis][s], fase)
 
-                        tmp = self.rho_history[axis][sensor]
+                        tmp = self.rho_history[iaxis,sensor]
                         std_rho = np.std(tmp[np.isfinite(tmp)])
                         if std_rho < self.std_threshold[axis]  and self.firstCal[axis] == True:
                             self.count[axis][s] +=1
@@ -287,7 +287,7 @@ class Measure:
                         else:
                                 self.count[axis][s] = 0
                     else:
-                        delta_fase[s] = self.deltaphi_last[axis][sensor]
+                        delta_fase[s] = self.deltaphi_last[iaxis,sensor]
 
                     stats.collect(f"{axis} ch101.{s} done")
                     s += 1
@@ -355,58 +355,9 @@ class Measure:
             v_sound[iaxis] = 0.5 * (q[0] + q[1])
 
             # Aggiorna lo storico dei valori precedenti
-            fixed_len_append(self.v_air_history[axis], v_air[iaxis])
+            fixed_len_append(self.v_air_history[iaxis], v_air[iaxis])
 
             stats.collect(f"{axis} v_air/v_sound done")
-
-            # --- MEDIA ROBUSTA ---
-            vmean = np.abs(np.nan_to_num(self.v_air_history[axis]).mean())
-            vmean_ax[iaxis] = vmean
-
-            # --- PARAMETRI ---
-            scala_min = 0.35
-            scala_max = 1.15
-            std_lim   = self.std_soglia[axis]
-            v_ref     = 0.15         # soglia per la scala
-            v_ref_offset = 0.1       # soglia per il DC remover
-
-            # --- STD MEDIA ---
-            std_mean = np.nan_to_num(np.std(self.rho_history[axis], axis=1).mean(), nan=np.inf)
-
-            # 1) Fattore da velocità (continuo e saturato)
-            t = np.clip(vmean / v_ref, 0.0, 1.0)
-            scala_vel = scala_min + (scala_max - scala_min) * t
-
-            # 2) Piccola correzione da std
-            r_std = np.clip(std_mean / std_lim, 0.0, 1.0)
-            std_gain_min = 0.9
-            std_gain_max = 1.1
-            g_std = std_gain_min + (std_gain_max - std_gain_min) * r_std
-
-            # peso della std solo a bassa velocità
-            w_std = 1.0 - t      # t=0 -> w_std=1 ; t>=1 -> w_std=0
-
-            # 3) Scala finale complessiva (CONTINUA)
-            scala = scala_vel * (1.0 + w_std * (g_std - 1.0))
-            scala_ax[iaxis] = scala
-            #   SCALA PURA
-            v_air_scaled = scala * v_air[iaxis]
-
-            # =========================
-            vmean_abs = abs(vmean)
-            if vmean_abs <= v_ref_offset:
-                if not np.isfinite(self.v_offset[iaxis]):
-                    self.v_offset[iaxis] = 0.0
-
-                # --- DC removal ATTIVO (bassa velocità) ---
-                self.v_offset[iaxis] = ((1.0 - self.alpha_dc) * self.v_offset[iaxis] + self.alpha_dc * v_air_scaled)
-                v_air_out[iaxis] = v_air_scaled - self.v_offset[iaxis]
-
-            else:
-                # --- DC removal DISATTIVO (alta velocità) ---
-                v_air_out[iaxis] = v_air_scaled
-
-            stats.collect(f"{axis} rescaling for v_air_out done")
 
             #   KALMAN
             Q = self.q_kalman
@@ -416,6 +367,52 @@ class Measure:
             temp_sonica[iaxis]=v_sound_filtered**2/(1.4*287)-273.15
 
             stats.collect(f"{axis} kalman for temp_sonica done")
+
+        # --- MEDIA ROBUSTA ---
+        vmean_ax = np.abs(np.nan_to_num(self.v_air_history).mean(axis=1))
+
+        # --- PARAMETRI ---
+        scala_min = 0.35
+        scala_max = 1.15
+        std_lim   = self.std_soglia
+        v_ref     = 0.15         # soglia per la scala
+        v_ref_offset = 0.1       # soglia per il DC remover
+
+        # --- STD MEDIA ---
+        std_mean = np.nan_to_num(np.std(self.rho_history, axis=2).mean(axis=1), nan=np.inf)
+
+        # 1) Fattore da velocità (continuo e saturato)
+        t = np.clip(vmean_ax / v_ref, 0.0, 1.0)
+        scala_vel = scala_min + (scala_max - scala_min) * t
+
+        # 2) Piccola correzione da std
+        r_std = np.clip(std_mean / std_lim, 0.0, 1.0)
+        std_gain_min = 0.9
+        std_gain_max = 1.1
+        g_std = std_gain_min + (std_gain_max - std_gain_min) * r_std
+
+        # peso della std solo a bassa velocità
+        w_std = 1.0 - t      # t=0 -> w_std=1 ; t>=1 -> w_std=0
+
+        # 3) Scala finale complessiva (CONTINUA)
+        scala = scala_vel * (1.0 + w_std * (g_std - 1.0))
+        scala_ax = scala
+
+        #   SCALA PURA
+        v_air_scaled = scala * v_air
+
+        # =========================
+        # --- alta velocità ---
+        v_air_out = v_air_scaled
+
+        # --- bassa velocità: DC removal ATTIVO ---
+        vmean_abs = np.abs(vmean_ax)
+        slow_axes = vmean_abs <= v_ref_offset
+        self.v_offset[slow_axes] = np.nan_to_num(self.v_offset, nan=0.0)
+        self.v_offset[slow_axes] = ((1.0 - self.alpha_dc) * self.v_offset + self.alpha_dc * v_air_scaled)
+        v_air_out[slow_axes] -= self.v_offset
+
+        stats.collect(f"rescaling for v_air_out done")
 
         # =========================
         # SCALA SELETTIVA PER ASSE
