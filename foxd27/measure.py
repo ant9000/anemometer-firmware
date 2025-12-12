@@ -406,12 +406,12 @@ class Measure:
         v_air_out = v_air_scaled
 
         # --- bassa velocità: DC removal ATTIVO ---
-        vmean_abs = np.abs(vmean_ax)
-        slow_axes = vmean_abs <= v_ref_offset
-        self.v_offset[slow_axes] = np.nan_to_num(self.v_offset[slow_axes], nan=0.0)
-        self.v_offset[slow_axes] *= (1.0 - self.alpha_dc)
-        self.v_offset[slow_axes] += self.alpha_dc * v_air_scaled[slow_axes]
-        v_air_out[slow_axes] -= self.v_offset
+        slow_axes = np.abs(vmean_ax) <= v_ref_offset
+        if slow_axes.any():
+            self.v_offset[slow_axes] = np.nan_to_num(self.v_offset[slow_axes], nan=0.0)
+            self.v_offset[slow_axes] *= (1.0 - self.alpha_dc)
+            self.v_offset[slow_axes] += self.alpha_dc * v_air_scaled[slow_axes]
+            v_air_out[slow_axes] -= self.v_offset[slow_axes]
 
         stats.collect(f"rescaling for v_air_out done")
 
