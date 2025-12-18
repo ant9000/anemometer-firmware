@@ -75,7 +75,7 @@ try:
                 msg = json.dumps(v_air, cls=FloatEncoder, decimals=4)
                 info = mqttClient.publish(topic=topic, payload=msg.encode("utf-8"), qos=0)
                 info.wait_for_publish()
-                print(f"[{topic}] sent message on {topic}")
+                print(f"[{topic}] sent message on {topic} (queue size: {data_queue.qsize()}")
         except Exception as e:
             print("ERROR: {e}")
 except KeyboardInterrupt:
