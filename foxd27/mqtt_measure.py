@@ -1,6 +1,6 @@
 #!/usr/bin/python3 -u
 
-import sys, math, json, re
+import sys, math, json, re, queue
 import paho.mqtt.client as mqtt
 from io import StringIO
 from measure import Measure
@@ -38,10 +38,12 @@ class FloatEncoder(json.JSONEncoder):
         return super().encode(obj)
 
 measures = {}
+data_queue = queue.Queue()
 def on_message(c, u, m):
-    global measures
+    global measures, data_queue
     try:
         topic = re.sub("/raw$","", m.topic)
+        topic = f"measure/{topic}"
 
         payload = str(m.payload.decode("utf-8"))
         data = json.loads(payload)
@@ -56,11 +58,9 @@ def on_message(c, u, m):
             print(f"[{topic}] {line}")
 
         if v_air:
-            msg = json.dumps(v_air, cls=FloatEncoder, decimals=4)
-            mqttClient.publish(topic=topic, payload=msg.encode("utf-8"), qos=0)
-            print(f"[{topic}] sent message on {topic}")
+            data_queue.put((topic, v_air))
     except Exception as e:
-        print("ERROR: {e} - discarding")
+        print("[on_message] ERROR: {e} - discarding")
 
 print("Connecting to  MQTT server...", flush=True, end="")
 mqttClient = mqtt.Client(NAME)
@@ -68,7 +68,16 @@ mqttClient.connect(HOSTNAME, 1883)
 print(" done.")
 mqttClient.on_message = on_message
 mqttClient.subscribe([(t,0) for t in TOPICS])
+mqttClient.loop_start()
 try:
-    mqttClient.loop_forever()
+    while True:
+        (topic, v_air) = data_queue.get()
+        try:
+            msg = json.dumps(v_air, cls=FloatEncoder, decimals=4)
+            info = mqttClient.publish(topic=topic, payload=msg.encode("utf-8"), qos=0)
+            info.wait_for_publish()
+            print(f"[{topic}] sent message on {topic}")
+        except Exception as e:
+            print("[main] ERROR: {e}")
 except KeyboardInterrupt:
     pass
