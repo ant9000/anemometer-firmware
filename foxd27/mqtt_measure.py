@@ -37,30 +37,10 @@ class FloatEncoder(json.JSONEncoder):
         obj = self._process_floats(obj)
         return super().encode(obj)
 
-measures = {}
 data_queue = queue.Queue()
 def on_message(c, u, m):
-    global measures, data_queue
-    try:
-        topic = re.sub("/raw$","", m.topic)
-        topic = f"measure/{topic}"
-
-        payload = str(m.payload.decode("utf-8"))
-        data = json.loads(payload)
-
-        if topic not in measures:
-            axes = "".join([axis for axis in "xyz" if axis in data])
-            measures[topic] = Measure(axes=axes, n_campioni=30, q_kalman=0.005)
-
-        with Capturing() as output:
-            v_air = measures[topic].compute(data)
-        for line in output:
-            print(f"[{topic}] {line}")
-
-        if v_air:
-            data_queue.put((topic, v_air))
-    except Exception as e:
-        print("[on_message] ERROR: {e} - discarding")
+    global data_queue
+    data_queue.put(m)
 
 print("Connecting to  MQTT server...", flush=True, end="")
 mqttClient = mqtt.Client(NAME)
@@ -69,15 +49,34 @@ print(" done.")
 mqttClient.on_message = on_message
 mqttClient.subscribe([(t,0) for t in TOPICS])
 mqttClient.loop_start()
+
 try:
+    measures = {}
     while True:
-        (topic, v_air) = data_queue.get()
         try:
-            msg = json.dumps(v_air, cls=FloatEncoder, decimals=4)
-            info = mqttClient.publish(topic=topic, payload=msg.encode("utf-8"), qos=0)
-            info.wait_for_publish()
-            print(f"[{topic}] sent message on {topic}")
+            m = data_queue.get()
+
+            topic = re.sub("/raw$","", m.topic)
+            topic = f"measure/{topic}"
+
+            payload = str(m.payload.decode("utf-8"))
+            data = json.loads(payload)
+
+            if topic not in measures:
+                axes = "".join([axis for axis in "xyz" if axis in data])
+                measures[topic] = Measure(axes=axes, n_campioni=30, q_kalman=0.005)
+
+            with Capturing() as output:
+                v_air = measures[topic].compute(data)
+            for line in output:
+                print(f"[{topic}] {line}")
+
+            if v_air:
+                msg = json.dumps(v_air, cls=FloatEncoder, decimals=4)
+                info = mqttClient.publish(topic=topic, payload=msg.encode("utf-8"), qos=0)
+                info.wait_for_publish()
+                print(f"[{topic}] sent message on {topic}")
         except Exception as e:
-            print("[main] ERROR: {e}")
+            print("ERROR: {e}")
 except KeyboardInterrupt:
     pass
