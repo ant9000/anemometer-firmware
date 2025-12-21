@@ -1,6 +1,6 @@
 #!/usr/bin/python3 -u
 
-import sys, math, json, re, queue
+import sys, math, json, re, queue, time
 import paho.mqtt.client as mqtt
 from io import StringIO
 from measure import Measure
@@ -8,6 +8,7 @@ from measure import Measure
 NAME = "measure"
 HOSTNAME = "localhost"
 TOPICS = ["anemometer/raw","+/anemometer/raw"]
+DELAY = 30
 
 class Capturing(list):
     def __enter__(self):
@@ -38,16 +39,40 @@ class FloatEncoder(json.JSONEncoder):
         return super().encode(obj)
 
 data_queue = queue.Queue()
+mqttClient = mqtt.Client(NAME)
+
+def try_connect():
+    print(f"Connecting to MQTT server {HOSTNAME}")
+    try:
+        mqttClient.connect(HOSTNAME, 1883)
+    except Exception as e:
+        print(f"ERROR: {e} - sleeping {DELAY} seconds before trying again.")
+        time.sleep(DELAY)
+        try_connect()
+
+def on_connect(c, u, f, rc):
+    print("Connected.")
+    c.subscribe([(t,0) for t in TOPICS])
+
+def on_connect_fail(c, u):
+    print(f"Connection failed - sleeping {DELAY} seconds before trying again.")
+    time.sleep(DELAY)
+    try_connect()
+
 def on_message(c, u, m):
-    global data_queue
     data_queue.put(m)
 
-print("Connecting to  MQTT server...", flush=True, end="")
-mqttClient = mqtt.Client(NAME)
-mqttClient.connect(HOSTNAME, 1883)
-print(" done.")
+def on_disconnect(c, u, rc):
+    if rc != 0:
+        print(f"Client disconnected - sleeping {DELAY} seconds before trying again.")
+        time.sleep(DELAY)
+        try_connect()
+
+mqttClient.on_connect = on_connect
+mqttClient.on_connect_fail = on_connect_fail
 mqttClient.on_message = on_message
-mqttClient.subscribe([(t,0) for t in TOPICS])
+mqttClient.on_disconnect = on_disconnect
+try_connect()
 mqttClient.loop_start()
 
 try:
@@ -77,6 +102,6 @@ try:
                 info.wait_for_publish()
                 print(f"[{topic}] sent message on {topic} (queue size: {data_queue.qsize()})")
         except Exception as e:
-            print("ERROR: {e}")
+            print(f"ERROR: {e}")
 except KeyboardInterrupt:
     pass
