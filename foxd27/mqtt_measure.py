@@ -10,6 +10,9 @@ HOSTNAME = "localhost"
 TOPICS = ["anemometer/raw","+/anemometer/raw"]
 DELAY = 30
 
+if len(sys.argv) > 1:
+    HOSTNAME = sys.argv[1]
+
 class Capturing(list):
     def __enter__(self):
         self._stdout = sys.stdout
@@ -82,7 +85,8 @@ try:
             m = data_queue.get()
 
             topic = re.sub("/raw$","", m.topic)
-            topic = f"measure/{topic}"
+            if topic != "anemometer":
+                topic = f"measure/{topic}"
 
             payload = str(m.payload.decode("utf-8"))
             data = json.loads(payload)
