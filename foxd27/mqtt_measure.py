@@ -95,7 +95,7 @@ try:
 
             if topic not in measures:
                 axes = "".join([axis for axis in "xyz" if axis in data])
-                measures[topic] = Measure(host=host, axes=axes, n_campioni=30, q_kalman=0.005)
+                measures[topic] = Measure(host=hostname, axes=axes, n_campioni=30, q_kalman=0.005)
 
             with Capturing() as output:
                 v_air = measures[topic].compute(data)
