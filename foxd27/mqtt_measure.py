@@ -87,9 +87,8 @@ try:
             m = data_queue.get()
 
             topic = re.sub("/raw$","", m.topic)
-            hostname = "localhost"
+            hostname = HOSTNAME
             if topic != "anemometer":
-                hostname = re.sub("/anemometer$","", topic)
                 topic = f"measure/{topic}"
 
             payload = str(m.payload.decode("utf-8"))
