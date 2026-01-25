@@ -1,7 +1,7 @@
 import numpy as np
 import time
 
-from calibration import DIST, SAMPLE, THRESHOLDS, PROFILE
+from calibration import DIST, THRESHOLDS, PROFILE
 
 if PROFILE:
     class Stats:
@@ -68,7 +68,7 @@ class KalmanFilter:
         return self.x_est
 
 class Measure:
-    def __init__(self, axes, n_campioni, q_kalman):
+    def __init__(self, host, axes, n_campioni, q_kalman):
         self.axes_sel = {}
         for axis in "xyz":
             self.axes_sel[axis] = axis in axes
@@ -76,10 +76,11 @@ class Measure:
         self.clear()
         #
         self.q_kalman = q_kalman
-        self.std_threshold = THRESHOLDS["rho"]
-        self.std_soglia = np.array([THRESHOLDS["scale"][axis] for axis in "xyz"])
+        self.std_threshold = THRESHOLDS[host]["rho"]
+        self.std_soglia = np.array([THRESHOLDS[host]["scale"][axis] for axis in "xyz"])
         self.v_offset = np.full(len("xyz"), 0.0)
         self.alpha_dc = 0.01
+        self.dist = DIST[host]
 
     def clear(self):
         self.CALIBRATION = {}
@@ -152,7 +153,7 @@ class Measure:
         output = {k: np.full((N, 2), np.nan) for k in ["dist0", "sample0", "phi0", "T0", "tof0", "f"]}
         for iaxis, axis in enumerate(axes):
             for sensor in [0,1]:
-                dist0 = DIST[f"{axis}{sensor}"]
+                dist0 = self.dist[f"{axis}{sensor}"]
                 peak = self.CALIBRATION_INPUT[f"peak_{axis}{sensor}"]
                 if len(peak) == 0:
                     self.axes_sel[axis] = False
@@ -220,7 +221,7 @@ class Measure:
             for item in measure.get(axis, []):
                 if "hdc3020" in item:
                     sensor = item["hdc3020"]
-                    dist = DIST[f"{axis}{sensor}"]
+                    dist = self.dist[f"{axis}{sensor}"]
                     T_now.append(item["temp"])
                     Tmean = np.mean(T_now)
                     v_sound_cal = np.sqrt(1.4 * 287 * (Tmean + 273.15))

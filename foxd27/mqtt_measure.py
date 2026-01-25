@@ -85,7 +85,9 @@ try:
             m = data_queue.get()
 
             topic = re.sub("/raw$","", m.topic)
+            hostname = "localhost"
             if topic != "anemometer":
+                hostname = topic.replace("/anemometer","")
                 topic = f"measure/{topic}"
 
             payload = str(m.payload.decode("utf-8"))
@@ -93,7 +95,7 @@ try:
 
             if topic not in measures:
                 axes = "".join([axis for axis in "xyz" if axis in data])
-                measures[topic] = Measure(axes=axes, n_campioni=30, q_kalman=0.005)
+                measures[topic] = Measure(host=host, axes=axes, n_campioni=30, q_kalman=0.005)
 
             with Capturing() as output:
                 v_air = measures[topic].compute(data)
