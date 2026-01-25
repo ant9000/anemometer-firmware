@@ -87,7 +87,7 @@ try:
             topic = re.sub("/raw$","", m.topic)
             hostname = "localhost"
             if topic != "anemometer":
-                hostname = topic.replace("/anemometer","")
+                hostname = re.sub("/anemometer$","", topic)
                 topic = f"measure/{topic}"
 
             payload = str(m.payload.decode("utf-8"))
