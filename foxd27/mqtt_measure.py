@@ -8,7 +8,8 @@ from measure import Measure
 NAME = "measure"
 HOSTNAME = "localhost"
 TOPICS = ["anemometer/raw","+/anemometer/raw"]
-DELAY = 30
+DELAY = 60
+DELAYDISCONNECT = 60
 
 if len(sys.argv) > 1:
     HOSTNAME = sys.argv[1]
@@ -67,8 +68,8 @@ def on_message(c, u, m):
 
 def on_disconnect(c, u, rc):
     if rc != 0:
-        print(f"Client disconnected - sleeping {DELAY} seconds before trying again.")
-        time.sleep(DELAY)
+        print(f"Client disconnected - sleeping {DELAYDISCONNECT} seconds before trying again.")
+        time.sleep(DELAYDISCONNECT)
         try_connect()
 
 mqttClient.on_connect = on_connect
@@ -77,6 +78,7 @@ mqttClient.on_message = on_message
 mqttClient.on_disconnect = on_disconnect
 try_connect()
 mqttClient.loop_start()
+count=0
 
 try:
     measures = {}
@@ -106,7 +108,16 @@ try:
                 msg = json.dumps(v_air, cls=FloatEncoder, decimals=4)
                 info = mqttClient.publish(topic=topic, payload=msg.encode("utf-8"), qos=0)
                 info.wait_for_publish()
-                print(f"[{topic}] sent message on {topic} (queue size: {data_queue.qsize()})")
+#                print(f"[{topic}] sent message on {topic} (queue size: {data_queue.qsize()}"
+                count = count+1
+                if (count%100 == 1):
+#                    print(f"{data_queue.qsize()}")
+                    miatopic = "status"  
+                    miomsg = f"coda: {data_queue.qsize()}"
+                    print(f"[{HOSTNAME}/{topic}] {data_queue.qsize()}")
+                    info = mqttClient.publish(topic=miatopic, payload=miomsg.encode("utf-8"), qos=0)
+                    info.wait_for_publish()
+
         except Exception as e:
             print(f"ERROR: {e}")
 except KeyboardInterrupt:

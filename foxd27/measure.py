@@ -3,40 +3,41 @@ import time
 
 from calibration import DIST, THRESHOLDS, PROFILE
 
-if PROFILE:
-    class Stats:
-        cols = []
-        def __init__(self):
-            self.times = []
-        def collect(self, msg):
-            self.times.append((msg, time.perf_counter(), time.process_time()))
-        def print(self):
-            t00, t01 = self.times[0][1:]
-            cols = ["TIME"]
-            realtime = ["REAL"]
-            proctime = ["PROC"]
-            for msg, t0, t1 in self.times:
-                cols.append(msg)
-                realtime.append(int((t0 - t00) * 1000000))
-                proctime.append(int((t1 - t01) * 1000000))
-            if not Stats.cols:
-                Stats.cols = cols
-                print(";".join(cols))
-            print(";".join(map(str, realtime)))
-            print(";".join(map(str, proctime)))
-            realtime = ["REAL inc", 0] + list(np.diff(realtime[1:]))
-            proctime = ["PROC inc", 0] + list(np.diff(proctime[1:]))
-            print(";".join(map(str, realtime)))
-            print(";".join(map(str, proctime)))
-else:
-    class Stats:
-        def collect(self, msg):
-            pass
-        def print(self):
-            pass
+# if PROFILE:
+    # class Stats:
+        # cols = []
+        # def __init__(self):
+            # self.times = []
+        # def collect(self, msg):
+            # self.times.append((msg, time.perf_counter(), time.process_time()))
+        # def print(self):
+            # t00, t01 = self.times[0][1:]
+            # cols = ["TIME"]
+            # realtime = ["REAL"]
+            # proctime = ["PROC"]
+            # for msg, t0, t1 in self.times:
+                # cols.append(msg)
+                # realtime.append(int((t0 - t00) * 1000000))
+                # proctime.append(int((t1 - t01) * 1000000))
+            # if not Stats.cols:
+                # Stats.cols = cols
+                # print(";".join(cols))
+            # print(";".join(map(str, realtime)))
+            # print(";".join(map(str, proctime)))
+            # realtime = ["REAL inc", 0] + list(np.diff(realtime[1:]))
+            # proctime = ["PROC inc", 0] + list(np.diff(proctime[1:]))
+            # print(";".join(map(str, realtime)))
+            # print(";".join(map(str, proctime)))
+# else:
+    # class Stats:
+        # def collect(self, msg):
+            # pass
+        # def print(self):
+            # pass
 
 def polar(i, q):
-    SAMPLES = 80
+    #SAMPLES = 80
+    SAMPLES = 40
     c = np.array(i) + np.array(q) * 1j
     c = np.pad(c, (0, SAMPLES), mode="constant", constant_values=0)[:SAMPLES]
     return (np.abs(c), np.angle(c, deg=False))
@@ -81,7 +82,24 @@ class Measure:
         self.v_offset = np.full(len("xyz"), 0.0)
         self.alpha_dc = 0.01
         self.dist = DIST[host]
-
+       
+        # =========================
+        # LPF CAUSALE OPERATIVO
+        # =========================
+        self.fc_lpf = 2           # Hz
+        self.fs_lpf = 10         # Hz (sampling reale del sistema)
+        self.alpha_lpf = (
+            2 * np.pi * self.fc_lpf
+        ) / (
+            2 * np.pi * self.fc_lpf + self.fs_lpf
+        )
+        
+        # stato del filtro per ciascun asse (x,y,z)
+        self.v_lpf_state = {axis: np.nan for axis in "xyz"}
+        # flag ON/OFF (utile per debug)
+        self.enable_lpf = True        
+       
+        
     def clear(self):
         self.CALIBRATION = {}
         self.CALIBRATION_INPUT = {}
@@ -93,6 +111,8 @@ class Measure:
                 self.CALIBRATION_INPUT[f"phi_{axis}{sensor}"] = []
                 self.CALIBRATION_INPUT[f"T_{axis}{sensor}"] = []
                 self.CALIBRATION_INPUT[f"f_{axis}{sensor}"] = np.nan
+        
+        self.v_air_out_history = np.full((3, 50), np.nan)
         self.v_air_history = np.full((3, 10), np.nan)
         self.deltaphi_last = np.full((3,2), np.nan)
 #       self.v_air_filter = { axis: KalmanFilter() for axis in "xyz" }
@@ -153,6 +173,7 @@ class Measure:
         output = {k: np.full((N, 2), np.nan) for k in ["dist0", "sample0", "phi0", "T0", "tof0", "f"]}
         for iaxis, axis in enumerate(axes):
             for sensor in [0,1]:
+#                dist0 = DIST[f"{axis}{sensor}"]
                 dist0 = self.dist[f"{axis}{sensor}"]
                 peak = self.CALIBRATION_INPUT[f"peak_{axis}{sensor}"]
                 if len(peak) == 0:
@@ -200,8 +221,8 @@ class Measure:
             # calibration output not yet available, skip
             return
 
-        stats = Stats()
-        stats.collect("start")
+#        stats = Stats()
+#        stats.collect("start")
         axes = self.get_axes()
         N = len(axes)
         v_air = np.full(N, np.nan)
@@ -210,8 +231,10 @@ class Measure:
         vmean_ax = np.full(N, np.nan)
         scala_ax = np.full(N, 1.0) # default = nessuna scala
         v_air_out = np.full(N, np.nan)
-
-        stats.collect("init done")
+        temp_sonica_vout = np.full(N, np.nan)
+        v_air_out_mean  = np.full(N, np.nan)
+        
+#        stats.collect("init done")
 
         for iaxis, axis in enumerate(axes):
             s = 0
@@ -221,6 +244,7 @@ class Measure:
             for item in measure.get(axis, []):
                 if "hdc3020" in item:
                     sensor = item["hdc3020"]
+#                    dist = DIST[f"{axis}{sensor}"]
                     dist = self.dist[f"{axis}{sensor}"]
                     T_now.append(item["temp"])
                     Tmean = np.mean(T_now)
@@ -229,7 +253,7 @@ class Measure:
                     tof0[g] = dist / v_sound_cal
                     if g == 1:
                         tof0[0] = tof0[1]
-                    stats.collect(f"{axis} hdc3020.{g} done")
+#                    stats.collect(f"{axis} hdc3020.{g} done")
 
                 elif "ch101" in item:
                     sensor = item["ch101"]
@@ -238,7 +262,7 @@ class Measure:
                     if len(finite_idx) == 0:
                         continue
 
-                    stats.collect(f"{axis} ch101.{s} data collection done")
+#                    stats.collect(f"{axis} ch101.{s} data collection done")
 
                     sample_measure = int(finite_idx[np.argmax(rho[finite_idx])]) - 2
 
@@ -248,7 +272,7 @@ class Measure:
                     sample0 = int(sample0_val)
                     amp_max = rho[sample0]
 
-                    soglia_amp = 3000
+                    soglia_amp = 2000
                     tmp = self.rho_history[iaxis,sensor]
                     amp_hist = tmp[np.isfinite(tmp)]
                     mean_amp = np.mean(amp_hist) if len(amp_hist) else amp_max
@@ -261,7 +285,7 @@ class Measure:
 
                     fixed_len_append(self.rho_history[iaxis,sensor], amp_max)
 
-                    stats.collect(f"{axis} ch101.{s} amp_max filtering done")
+#                    stats.collect(f"{axis} ch101.{s} amp_max filtering done")
 
                     fase = phi[sample0]
                     #Unwrap fase
@@ -290,7 +314,7 @@ class Measure:
                     else:
                         delta_fase[s] = self.deltaphi_last[iaxis,sensor]
 
-                    stats.collect(f"{axis} ch101.{s} done")
+#                    stats.collect(f"{axis} ch101.{s} done")
                     s += 1
 
             if self.Autocal[axis] == 1 and self.firstCal[axis]==True:
@@ -309,7 +333,7 @@ class Measure:
             else:
                 self.autocal_misura[axis] = False
 
-            stats.collect(f"{axis} autocal check done")
+#            stats.collect(f"{axis} autocal check done")
 
             for s in [0,1]:
                 if abs(delta_fase[s]) > np.pi:
@@ -319,7 +343,7 @@ class Measure:
             delta_abs = np.abs(delta_fase)
 
             # Soglie
-            OUTLIER_RATIO = 4.0     # quanto può essere più grande uno rispetto all'altro
+            OUTLIER_RATIO = 100.0     # quanto può essere più grande uno rispetto all'altro
             MIN_DELTA     = 1e-3    # sotto questo valore consideriamo "rumore"
 
             if delta_abs[np.isfinite(delta_abs)].size and delta_abs.max() > MIN_DELTA:
@@ -346,7 +370,7 @@ class Measure:
                 delta_phi_avg = (delta_fase[0] - delta_fase[1]) / 2
                 delta_fase = np.array([delta_phi_avg, -delta_phi_avg])
 
-            stats.collect(f"{axis} delta fase filtering done")
+#            stats.collect(f"{axis} delta fase filtering done")
 
             # Calcola la velocità del flusso d'aria
             tof = self.tof_last[axis] - (1000000 * delta_fase) / (2 * np.pi * self.CALIBRATION["f"][iaxis])
@@ -354,106 +378,195 @@ class Measure:
             q = dist / tof
             v_air[iaxis]   = 0.5 * (q[0] - q[1])
             v_sound[iaxis] = 0.5 * (q[0] + q[1])
-
+            temp_sonica[iaxis] = v_sound[iaxis]**2 / (1.4 * 287) - 273.15
+           
             # Aggiorna lo storico dei valori precedenti
             fixed_len_append(self.v_air_history[iaxis], v_air[iaxis])
 
-            stats.collect(f"{axis} v_air/v_sound done")
+#            stats.collect(f"{axis} v_air/v_sound done")
 
             #   KALMAN
-            Q = self.q_kalman
+            #Q = self.q_kalman
 
             # Per la temperatura usiamo il valore di velocità uscente dal filtro di Kalman
-            v_sound_filtered = self.v_sound_filter[axis].update(v_sound[iaxis], Q)
-            temp_sonica[iaxis]=v_sound_filtered**2/(1.4*287)-273.15
+            #v_sound_filtered = self.v_sound_filter[axis].update(v_sound[iaxis], Q)
+            #temp_sonica[iaxis]=v_sound_filtered**2/(1.4*287)-273.15
 
-            stats.collect(f"{axis} kalman for temp_sonica done")
+            #stats.collect(f"{axis} kalman for temp_sonica done")
 
         # --- MEDIA ROBUSTA ---
         vmean_ax = np.abs(np.nan_to_num(self.v_air_history).mean(axis=1))
-
+  
+        scala_min = 0.25
+        scala_max = 1.1
+        v_ref     = 0.1      # soglia per la scala
+        v_ref_offset = 0.1  # soglia per DC remover
+        
+        # --- Fattore da velocità (continuo e saturato) ---
+        t = np.clip(vmean_ax / v_ref, 0.0, 1.0)
+        scala_ax = scala_min + (scala_max - scala_min) * t
+        
+        # --- SCALA PURA ---
+        v_air_scaled = scala_ax * v_air    
+          
+    
         # --- PARAMETRI ---
-        scala_min = 0.35
-        scala_max = 1.15
-        std_lim   = self.std_soglia
-        v_ref     = 0.15         # soglia per la scala
-        v_ref_offset = 0.1       # soglia per il DC remover
+#        scala_min = 0.4
+#        scala_max = 1.05
+#        std_lim   = self.std_soglia
+#        v_ref     = 0.1      # soglia per la scala
+#        v_ref_offset = 0.1       # soglia per il DC remover
 
         # --- STD MEDIA ---
-        std_mean = np.nan_to_num(np.std(self.rho_history, axis=2).mean(axis=1), nan=np.inf)
+#        std_mean = np.nan_to_num(np.std(self.rho_history, axis=2).mean(axis=1), nan=np.inf)
 
         # 1) Fattore da velocità (continuo e saturato)
-        t = np.clip(vmean_ax / v_ref, 0.0, 1.0)
-        scala_vel = scala_min + (scala_max - scala_min) * t
+#        t = np.clip(vmean_ax / v_ref, 0.0, 1.0)
+#        scala_vel = scala_min + (scala_max - scala_min) * t
 
         # 2) Piccola correzione da std
-        r_std = np.clip(std_mean / std_lim, 0.0, 1.0)
-        std_gain_min = 0.9
-        std_gain_max = 1.1
-        g_std = std_gain_min + (std_gain_max - std_gain_min) * r_std
+#        r_std = np.clip(std_mean / std_lim, 0.0, 1.0)
+#        std_gain_min = 1
+#        std_gain_max = 1
+#        g_std = std_gain_min + (std_gain_max - std_gain_min) * r_std
 
         # peso della std solo a bassa velocità
-        w_std = 1.0 - t      # t=0 -> w_std=1 ; t>=1 -> w_std=0
+#        w_std = 1.0 - t      # t=0 -> w_std=1 ; t>=1 -> w_std=0
 
         # 3) Scala finale complessiva (CONTINUA)
-        scala = scala_vel * (1.0 + w_std * (g_std - 1.0))
-        scala_ax = scala
+#        scala = scala_vel * (1.0 + w_std * (g_std - 1.0))
+#        scala_ax = scala
 
         #   SCALA PURA
-        v_air_scaled = scala * v_air
+#        v_air_scaled = scala * v_air
 
         # =========================
         # --- alta velocità ---
         v_air_out = v_air_scaled
 
         # --- bassa velocità: DC removal ATTIVO ---
-        slow_axes = np.abs(vmean_ax) <= v_ref_offset
-        if slow_axes.any():
-            self.v_offset[slow_axes] = np.nan_to_num(self.v_offset[slow_axes], nan=0.0)
-            self.v_offset[slow_axes] *= (1.0 - self.alpha_dc)
-            self.v_offset[slow_axes] += self.alpha_dc * v_air_scaled[slow_axes]
-            v_air_out[slow_axes] -= self.v_offset[slow_axes]
-
-        stats.collect(f"rescaling for v_air_out done")
+#        slow_axes = np.abs(vmean_ax) <= v_ref_offset
+#        if slow_axes.any():
+#            self.v_offset[slow_axes] = np.nan_to_num(self.v_offset[slow_axes], nan=0.0)
+#            self.v_offset[slow_axes] *= (1.0 - self.alpha_dc)
+#            self.v_offset[slow_axes] *= (1.0 - self.alpha_dc)
+#            self.v_offset[slow_axes] += self.alpha_dc * v_air_scaled[slow_axes]
+#            v_air_out[slow_axes] -= self.v_offset[slow_axes]
+        
+#        stats.collect(f"rescaling for v_air_out done")
 
         # =========================
         # SCALA SELETTIVA PER ASSE
         # =========================
-        if len(vmean_ax[vmean_ax <= v_ref_offset]) == N:
-            # CASO 1: tutti sotto → tengo la scala continua già calcolata
-            pass
+        mask_fast = vmean_ax > v_ref_offset
+        
+        if mask_fast.any():
+            # CASO 2: almeno un asse sopra soglia
+            # → applico scala selettiva
+            scala_ax[mask_fast] = 1.1
+            scala_ax[~mask_fast] = 1.0
         else:
-            # CASO 2: almeno uno sopra → scala selettiva
-            vmean_ax[vmean_ax > v_ref_offset] = 1.15
-            vmean_ax[vmean_ax <= v_ref_offset] = 1.0
+            # CASO 1: tutti sotto soglia
+            # → NON tocco scala_ax (resta quella continua)
+            pass
 
         # =========================
         # RIAPPLICA LA SCALA ALLE VELOCITÀ
         # =========================
-        v_air_out = scala_ax * v_air - self.v_offset
+        v_air_out = scala_ax * v_air# - self.v_offset
+        
 
-        stats.collect("per axis rescaling done")
-
+        for iaxis, axis in enumerate(axes):
+        
+            # applico scala
+            #v_air_out[iaxis] = scala_ax[iaxis] * v_air[iaxis]
+        
+            # LPF per asse
+            if self.enable_lpf:
+                if np.isnan(self.v_lpf_state[axis]):
+                    self.v_lpf_state[axis] = v_air_out[iaxis]
+                else:
+                    self.v_lpf_state[axis] += (
+                        self.alpha_lpf *
+                        (v_air_out[iaxis] - self.v_lpf_state[axis])
+                    )
+        
+                v_air_out[iaxis] = self.v_lpf_state[axis]
+        
+            # storico DOPO il filtro
+            fixed_len_append(self.v_air_out_history[iaxis], v_air_out[iaxis])
+              
+        # media temporale per asse
+        v_air_out_mean = np.nanmean(self.v_air_out_history, axis=1)
+        
+        # =========================
+        # TEMPERATURA SONICA COERENTE CON v_air_out
+        # =========================
+        
+        
+#        for iaxis, axis in enumerate(axes):
+#        
+#            d = self.CALIBRATION["dist0"][iaxis, 0]
+#        
+#            TOF = 0.5 * (
+#                self.tof_last[axis][0] +
+#                self.tof_last[axis][1]
+#            )
+#        
+#            v = v_air_out[iaxis]
+        
+#            if abs(v) > 1e-6:
+#                a = v
+#                b = d
+#                c = -v * TOF**2
+#                disc = max(b*b - 4*a*c, 0.0)
+#                delta_tof = (-b + np.sqrt(disc)) / (2*a)
+#            else:
+#                delta_tof = 0.0
+        
+#            tof0_new = self.tof_last[axis][0] - delta_tof
+#            tof1_new = self.tof_last[axis][1] + delta_tof
+        
+#            v_sound_corr = 0.5 * (d / tof0_new + d / tof1_new)
+#            temp_sonica_vout[iaxis] = v_sound_corr**2 / (1.4 * 287) - 273.15
+#            temp_sonica[iaxis]=temp_sonica_vout[iaxis]    
+        
+#        stats.collect("per axis rescaling done")
+           
         output = {'timestamp': measure["timestamp_end"]}
         for iaxis, axis in enumerate(axes):
-            output[axis] = v_air_out[iaxis]
+            #output[axis] = v_air_out[iaxis]
             # --- DIAGNOSTICA / AUTOCAL / TEMPERATURA ---
             output[f"autocalibrazione_asse_{axis}"]   = bool(self.autocal_completa[axis])
-            output[f"autocalibrazione_misura_{axis}"] = self.autocal_misura[axis]
+            output[f"autocalibrazione_misura_{axis}"] = self.autocal_completa[axis]
             output[f"temp_sonica_{axis}"]             = temp_sonica[iaxis]
 
-            output[f"{axis}_v_mean"] = vmean_ax[iaxis]
-            output[f"{axis}_scala"]  = scala_ax[iaxis]
+            output[f"{axis}_v_mean"] = v_air_out_mean[iaxis]
+            #output[f"{axis}_scala"]  = scala_ax[iaxis]
 
             # --- VELOCITÀ ---
             # v_air grezza
-            output[f"{axis}_vair"] = v_air[iaxis]
+            #output[f"{axis}_vair"] = v_air[iaxis]
             # v_air_out filtrata (scala + DC remover)
             output[f"{axis}_vout"] = v_air_out[iaxis]
             # chiave "semplice" usata da new_qt come RAW
-            output[axis] = v_air[iaxis]
+            #output[axis] = v_air[iaxis]
 
-        stats.collect("end")
-        stats.print()
+#        stats.collect("end")
+#        stats.print()
+        
+        DEBUG_OUTPUT = False
 
+        if DEBUG_OUTPUT:
+            msg = ["[MEASURE OUT]"]
+            for axis in axes:
+                msg.append(
+                    f"{axis}: "
+                    f"vout={output[f'{axis}_vout']:+.3f} m/s, "
+                    f"vmean={output[f'{axis}_v_mean']:+.3f} m/s, "
+                    f"Tson={output[f'temp_sonica_{axis}']:+.2f} °C, "
+                    f"autocal={output[f'autocalibrazione_misura_{axis}']}"
+                )
+            print(" | ".join(msg))
+        
         return output
