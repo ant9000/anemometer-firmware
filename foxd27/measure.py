@@ -78,7 +78,10 @@ class Measure:
         #
         self.q_kalman = q_kalman
         self.std_threshold = THRESHOLDS[host]["rho"]
+        print(f"host = {host}")
+        print(f"THRESHOLDS-rho: {self.std_threshold}")
         self.std_soglia = np.array([THRESHOLDS[host]["scale"][axis] for axis in "xyz"])
+        print(f"THRESHOLDS-scale: {self.std_soglia}")
         self.v_offset = np.full(len("xyz"), 0.0)
         self.alpha_dc = 0.01
         self.dist = DIST[host]
